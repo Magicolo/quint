@@ -9,7 +9,7 @@
             "type": "lldb",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "cargo": {"args": ["test", "--no-run"], "filter": {"kind": "test"}}
+            "cargo": { "args": ["test", "--no-run"], "filter": { "kind": "test" } }
         }
     ]
 }
