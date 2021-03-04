@@ -1,6 +1,7 @@
 use crate::node::*;
 use std::collections::HashMap;
 use std::mem;
+use std::ops::{Range, RangeInclusive};
 use std::rc::Rc;
 
 #[derive(Debug, Clone)]
@@ -22,6 +23,30 @@ pub struct Context<'a> {
     pub identifiers: HashMap<String, usize>,
 }
 
+impl AsNode for char {
+    fn as_node(self) -> Node {
+        Node::Symbol(self)
+    }
+}
+
+impl AsNode for &str {
+    fn as_node(self) -> Node {
+        all(self.chars().map(symbol).collect())
+    }
+}
+
+impl AsNode for Range<char> {
+    fn as_node(self) -> Node {
+        range(self.start, self.end)
+    }
+}
+
+impl AsNode for RangeInclusive<char> {
+    fn as_node(self) -> Node {
+        range(*self.start(), *self.end())
+    }
+}
+
 pub type Parse<'a> = dyn Fn(&mut State<'a>, &Context<'a>) -> bool + 'a;
 
 /*
@@ -38,6 +63,9 @@ pub type Parse<'a> = dyn Fn(&mut State<'a>, &Context<'a>) -> bool + 'a;
     TODO: collapse pattern '('A' & A) | ('B' & B) | ('C' & C)' to a map parser { 'A': A, 'B': B, 'C': C }
     TODO: add a state node
     TODO: operator precedence parser
+
+    TODO: retain ambiguities when both branches of an 'Or' succeeds?
+    TODO: run each branch of an 'Or' in parallel?
 */
 
 pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
@@ -82,8 +110,6 @@ pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
                 let mut parses = Vec::new();
                 any(node, context, &mut parses);
                 Rc::new(move |state, context| {
-                    // TODO: if more than 1 parse succeed, we know there is an ambiguity
-                    // TODO: run each parse in parallel?
                     for parse in &parses {
                         let mut local = state.clone();
                         if parse(&mut local, context) {
@@ -209,6 +235,9 @@ pub fn symbol(symbol: char) -> Node {
     Node::Symbol(symbol)
 }
 
-pub fn word(word: &str) -> Node {
-    all(word.chars().map(symbol).collect())
+pub fn range(low: char, high: char) -> Node {
+    any((low as u8..=high as u8)
+        .into_iter()
+        .map(|index| symbol(index as char))
+        .collect())
 }

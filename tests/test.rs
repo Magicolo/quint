@@ -1,30 +1,31 @@
 extern crate quint;
 use quint::node::*;
 use quint::parse::*;
+use quint::*;
 
 #[test]
 fn boba() {
-    let node = word("Boba");
+    let node = all!("Boba");
     assert_eq!(true, parse("Boba", &node).is_some());
     assert_eq!(true, parse("Fett", &node).is_none());
 }
 
 #[test]
 fn boba_and_fett() {
-    let node = all(vec![word("Boba"), symbol(' '), word("Fett")]);
+    let node = all!("Boba", ' ', "Fett");
     assert_eq!(true, parse("Boba Fett", &node).is_some());
 }
 
 #[test]
 fn boba_or_fett() {
-    let node = any(vec![word("Boba"), word("Fett")]);
+    let node = any!("Boba", "Fett");
     assert_eq!(true, parse("Boba", &node).is_some());
     assert_eq!(true, parse("Fett", &node).is_some());
 }
 
 #[test]
 fn repeat_boba() {
-    let node = repeat(.., word("Boba"));
+    let node = repeat(.., "Boba");
     assert_eq!(true, parse("", &node).is_some());
     assert_eq!(true, parse("Boba", &node).is_some());
     assert_eq!(true, parse("BobaBoba", &node).is_some());
@@ -34,7 +35,7 @@ fn repeat_boba() {
 
 #[test]
 fn repeat_low_boba() {
-    let node = repeat(2.., word("Boba"));
+    let node = repeat(2.., "Boba");
     assert_eq!(true, parse("", &node).is_none());
     assert_eq!(true, parse("Boba", &node).is_none());
     assert_eq!(true, parse("BobaBoba", &node).is_some());
@@ -44,13 +45,13 @@ fn repeat_low_boba() {
 
 #[test]
 fn repeat_high_boba() {
-    let node = repeat(..3, word("Boba"));
+    let node = repeat(..3, "Boba");
     assert_eq!(true, parse("", &node).is_some());
     assert_eq!(true, parse("Boba", &node).is_some());
     assert_eq!(true, parse("BobaBoba", &node).is_some());
     assert_eq!(true, parse("BobaBobaBoba", &node).is_none());
     assert_eq!(true, parse("BobaBobaBobaBoba", &node).is_none());
-    let node = repeat(..=3, word("Boba"));
+    let node = repeat(..=3, "Boba");
     assert_eq!(true, parse("", &node).is_some());
     assert_eq!(true, parse("Boba", &node).is_some());
     assert_eq!(true, parse("BobaBoba", &node).is_some());
@@ -60,13 +61,13 @@ fn repeat_high_boba() {
 
 #[test]
 fn repeat_range_boba() {
-    let node = repeat(2..3, word("Boba"));
+    let node = repeat(2..3, "Boba");
     assert_eq!(true, parse("", &node).is_none());
     assert_eq!(true, parse("Boba", &node).is_none());
     assert_eq!(true, parse("BobaBoba", &node).is_some());
     assert_eq!(true, parse("BobaBobaBoba", &node).is_none());
     assert_eq!(true, parse("BobaBobaBobaBoba", &node).is_none());
-    let node = repeat(2..=3, word("Boba"));
+    let node = repeat(2..=3, "Boba");
     assert_eq!(true, parse("", &node).is_none());
     assert_eq!(true, parse("Boba", &node).is_none());
     assert_eq!(true, parse("BobaBoba", &node).is_some());
@@ -76,7 +77,7 @@ fn repeat_range_boba() {
 
 #[test]
 fn join_boba() {
-    let node = join(word("Boba"), option(symbol(' ')));
+    let node = join(option(symbol(' ')), "Boba");
     assert_eq!(true, parse("Boba Boba", &node).is_some());
     assert_eq!(true, parse("BobaBoba", &node).is_some());
     assert_eq!(true, parse("Boba Boba Boba", &node).is_some());
@@ -85,7 +86,7 @@ fn join_boba() {
 
 #[test]
 fn spawn_boba() {
-    let node = spawn("Boba", word("Fett"));
+    let node = spawn("Boba", "Fett");
     let tree = parse("Fett", &node).unwrap();
     assert_eq!("Boba", tree.children[0].kind);
     assert_eq!("Fett", tree.children[0].value);
@@ -94,16 +95,20 @@ fn spawn_boba() {
 #[test]
 fn refer_boba_fett() {
     let node = all(vec![
-        define("Boba", word("Boba")),
+        define("Boba", "Boba"),
         refer("Boba"),
         symbol(' '),
         refer("Fett"),
-        define("Fett", word("Fett")),
+        define("Fett", "Fett"),
     ]);
     assert_eq!(true, parse("Boba Fett", &node).is_some());
 }
 
 #[test]
-fn json() {
-    // assert_eq!(true, parse("Boba Fett", &quint::json()).is_some());
+fn json_number() {
+    let node = json();
+    let tree = parse(r#"-1.2E3"#, &node).unwrap();
+    assert_eq!("number", tree.children[0].kind);
+    let tree = parse(r#"-0.1e2"#, &node).unwrap();
+    assert_eq!("number", tree.children[0].kind);
 }
