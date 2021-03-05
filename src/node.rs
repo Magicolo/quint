@@ -8,6 +8,13 @@ pub enum Identifier {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Bind {
+    None,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Node {
     True,
     False,
@@ -16,22 +23,23 @@ pub enum Node {
     Definition(Identifier, Box<Self>),
     Reference(Identifier),
 
+    Precedence(usize, Bind, Box<Self>),
     Spawn(String, Box<Self>),
     Symbol(char),
 }
 
-pub trait AsNode {
-    fn as_node(self) -> Node;
+pub trait To<T> {
+    fn to(self) -> T;
 }
 
-impl AsNode for Node {
-    fn as_node(self) -> Node {
+impl To<Node> for Node {
+    fn to(self) -> Node {
         self
     }
 }
 
-impl AsNode for &&str {
-    fn as_node(self) -> Node {
+impl To<Node> for &&str {
+    fn to(self) -> Node {
         refer(self)
     }
 }
@@ -48,9 +56,12 @@ impl Node {
                 Node::And(left, right) => and(next(*left, map), next(*right, map)),
                 Node::Or(left, right) => or(next(*left, map), next(*right, map)),
                 Node::Definition(identifier, node) => {
-                    Node::Definition(identifier, Box::new(next(*node, map)))
+                    Node::Definition(identifier, next(*node, map).into())
                 }
                 Node::Spawn(kind, node) => Node::Spawn(kind, Box::new(next(*node, map))),
+                Node::Precedence(precedence, bind, node) => {
+                    Node::Precedence(precedence, bind, next(*node, map).into())
+                }
                 _ => node,
             };
             map(node)
@@ -60,16 +71,16 @@ impl Node {
     }
 }
 
-pub fn option<N: AsNode>(node: N) -> Node {
+pub fn option<N: To<Node>>(node: N) -> Node {
     or(node, Node::True)
 }
 
-pub fn or<Left: AsNode, Right: AsNode>(left: Left, right: Right) -> Node {
-    Node::Or(Box::new(left.as_node()), Box::new(right.as_node()))
+pub fn or<L: To<Node>, R: To<Node>>(left: L, right: R) -> Node {
+    Node::Or(left.to().into(), right.to().into())
 }
 
-pub fn and<Left: AsNode, Right: AsNode>(left: Left, right: Right) -> Node {
-    Node::And(Box::new(left.as_node()), Box::new(right.as_node()))
+pub fn and<L: To<Node>, R: To<Node>>(left: L, right: R) -> Node {
+    Node::And(left.to().into(), right.to().into())
 }
 
 pub fn any(nodes: Vec<Node>) -> Node {
@@ -96,8 +107,8 @@ pub fn chain(nodes: Vec<Node>) -> Node {
         .fold(Node::True, |sum, node| option(and(node, sum)))
 }
 
-pub fn repeat<R: RangeBounds<usize>, N: AsNode>(range: R, node: N) -> Node {
-    let node = node.as_node();
+pub fn repeat<R: RangeBounds<usize>, N: To<Node>>(range: R, node: N) -> Node {
+    let node = node.to();
     let bounds = (range.start_bound(), range.end_bound());
     let low = match bounds.0 {
         Bound::Included(index) => *index,
@@ -126,17 +137,17 @@ pub fn refer(name: &str) -> Node {
     Node::Reference(Identifier::Name(name.into()))
 }
 
-pub fn define<N: AsNode>(name: &str, node: N) -> Node {
-    Node::Definition(Identifier::Name(name.into()), Box::new(node.as_node()))
+pub fn define<N: To<Node>>(name: &str, node: N) -> Node {
+    Node::Definition(Identifier::Name(name.into()), Box::new(node.to()))
 }
 
-pub fn join<S: AsNode, N: AsNode>(separator: S, node: N) -> Node {
+pub fn join<S: To<Node>, N: To<Node>>(separator: S, node: N) -> Node {
     repeat(.., and(node, option(separator)))
 }
 
-pub fn spawn<N: AsNode>(kind: &str, node: N) -> Node {
+pub fn spawn<N: To<Node>>(kind: &str, node: N) -> Node {
     and(
-        define(kind, Node::Spawn(kind.into(), Box::new(node.as_node()))),
+        define(kind, Node::Spawn(kind.into(), Box::new(node.to()))),
         refer(kind),
     )
 }
@@ -144,14 +155,14 @@ pub fn spawn<N: AsNode>(kind: &str, node: N) -> Node {
 #[macro_export]
 macro_rules! all {
     () => {{ Node::True }};
-    ($node: expr) => {{ AsNode::as_node($node) }};
+    ($node: expr) => {{ To::<Node>::to($node) }};
     ($node: expr, $($nodes: expr),+) => {{ and($node, all!($($nodes),+)) }};
 }
 
 #[macro_export]
 macro_rules! any {
     () => {{ Node::False }};
-    ($node: expr) => {{ AsNode::as_node($node.as_node()) }};
+    ($node: expr) => {{ To::<Node>::to($node) }};
     ($node: expr, $($nodes: expr),+) => {{ or($node, any!($($nodes),+)) }};
 }
 

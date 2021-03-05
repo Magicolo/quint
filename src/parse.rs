@@ -4,7 +4,7 @@ use std::mem;
 use std::ops::{Range, RangeInclusive};
 use std::rc::Rc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Tree<'a> {
     pub kind: String,
     pub value: &'a str,
@@ -15,34 +15,36 @@ pub struct Tree<'a> {
 pub struct State<'a> {
     pub index: usize,
     pub tree: Tree<'a>,
+    pub precedence: usize,
 }
 
+#[derive(Default)]
 pub struct Context<'a> {
     pub text: &'a str,
     pub references: HashMap<usize, Rc<Parse<'a>>>,
     pub identifiers: HashMap<String, usize>,
 }
 
-impl AsNode for char {
-    fn as_node(self) -> Node {
+impl To<Node> for char {
+    fn to(self) -> Node {
         Node::Symbol(self)
     }
 }
 
-impl AsNode for &str {
-    fn as_node(self) -> Node {
+impl To<Node> for &str {
+    fn to(self) -> Node {
         all(self.chars().map(symbol).collect())
     }
 }
 
-impl AsNode for Range<char> {
-    fn as_node(self) -> Node {
+impl To<Node> for Range<char> {
+    fn to(self) -> Node {
         range(self.start, self.end)
     }
 }
 
-impl AsNode for RangeInclusive<char> {
-    fn as_node(self) -> Node {
+impl To<Node> for RangeInclusive<char> {
+    fn to(self) -> Node {
         range(*self.start(), *self.end())
     }
 }
@@ -60,7 +62,9 @@ pub type Parse<'a> = dyn Fn(&mut State<'a>, &Context<'a>) -> bool + 'a;
 
     TODO: try to remove 'String.clone()' especially in the spawn logic
     TODO: collapse pattern ''B' & 'o' & 'b' & 'a'' to a word parser '"Boba"'
+    - this parser could use a u128 as a mask to check for multiple characters at once
     TODO: collapse pattern '('A' & A) | ('B' & B) | ('C' & C)' to a map parser { 'A': A, 'B': B, 'C': C }
+    TODO: add a range parser?
     TODO: add a state node
     TODO: operator precedence parser
 
@@ -175,15 +179,26 @@ pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
                     }
                 })
             }
+            Node::Precedence(precedence, bind, node) => {
+                let precedence = *precedence;
+                let bind = bind.clone();
+                let parse = next(node, context);
+                Rc::new(move |state, context| match bind {
+                    Bind::Left if precedence <= state.precedence => false,
+                    Bind::Right if precedence < state.precedence => false,
+                    _ => {
+                        let precedence = mem::replace(&mut state.precedence, precedence);
+                        let result = parse(state, context);
+                        state.precedence = precedence;
+                        result
+                    }
+                })
+            }
             _ => panic!("Invalid node {:?}.", node),
         }
     }
 
-    let mut context = Context {
-        text: "",
-        references: HashMap::new(),
-        identifiers: HashMap::new(),
-    };
+    let mut context = Context::default();
     let node = node
         .clone()
         .descend(|node| match node {
@@ -221,7 +236,11 @@ pub fn parse<'a>(text: &'a str, node: &Node) -> Option<Tree<'a>> {
         value: text,
         children: Vec::new(),
     };
-    let mut state = State { index: 0, tree };
+    let mut state = State {
+        index: 0,
+        tree,
+        precedence: 0,
+    };
     let (parse, mut context) = parser(node);
     context.text = text;
     if parse(&mut state, &context) && state.index == context.text.len() {
@@ -229,6 +248,18 @@ pub fn parse<'a>(text: &'a str, node: &Node) -> Option<Tree<'a>> {
     } else {
         None
     }
+}
+
+pub fn prefix<N: To<Node>>(precedence: usize, node: N) -> Node {
+    Node::Precedence(precedence, Bind::None, node.to().into())
+}
+
+pub fn postfix<N: To<Node>>(precedence: usize, bind: Bind, node: N) -> Node {
+    Node::Precedence(precedence, bind, node.to().into())
+}
+
+pub fn infix<L: To<Node>, R: To<Node>>(prefix: L, postfix: R) -> Node {
+    and(prefix, repeat(.., postfix))
 }
 
 pub fn symbol(symbol: char) -> Node {
