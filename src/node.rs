@@ -34,18 +34,18 @@ pub struct Context<T: Clone> {
     pub identifiers: HashMap<String, usize>,
 }
 
-pub trait To<T> {
-    fn to(self) -> T;
+pub trait ToNode {
+    fn node(self) -> Node;
 }
 
-impl To<Node> for Node {
-    fn to(self) -> Node {
+impl ToNode for Node {
+    fn node(self) -> Node {
         self
     }
 }
 
-impl To<Node> for &&str {
-    fn to(self) -> Node {
+impl ToNode for &&str {
+    fn node(self) -> Node {
         refer(self)
     }
 }
@@ -164,16 +164,16 @@ impl Node {
     }
 }
 
-pub fn option<N: To<Node>>(node: N) -> Node {
+pub fn option<N: ToNode>(node: N) -> Node {
     or(node, Node::True)
 }
 
-pub fn or<L: To<Node>, R: To<Node>>(left: L, right: R) -> Node {
-    Node::Or(left.to().into(), right.to().into())
+pub fn or<L: ToNode, R: ToNode>(left: L, right: R) -> Node {
+    Node::Or(left.node().into(), right.node().into())
 }
 
-pub fn and<L: To<Node>, R: To<Node>>(left: L, right: R) -> Node {
-    Node::And(left.to().into(), right.to().into())
+pub fn and<L: ToNode, R: ToNode>(left: L, right: R) -> Node {
+    Node::And(left.node().into(), right.node().into())
 }
 
 pub fn any(nodes: Vec<Node>) -> Node {
@@ -200,8 +200,8 @@ pub fn chain(nodes: Vec<Node>) -> Node {
         .fold(Node::True, |sum, node| option(and(node, sum)))
 }
 
-pub fn repeat<R: RangeBounds<usize>, N: To<Node>>(range: R, node: N) -> Node {
-    let node = node.to();
+pub fn repeat<R: RangeBounds<usize>, N: ToNode>(range: R, node: N) -> Node {
+    let node = node.node();
     let bounds = (range.start_bound(), range.end_bound());
     let low = match bounds.0 {
         Bound::Included(index) => *index,
@@ -230,44 +230,29 @@ pub fn refer(name: &str) -> Node {
     Node::Reference(Identifier::Path(name.into()))
 }
 
-pub fn define<N: To<Node>>(path: &str, node: N) -> Node {
-    Node::Definition(Identifier::Path(path.into()), node.to().into())
+pub fn define<N: ToNode>(path: &str, node: N) -> Node {
+    Node::Definition(Identifier::Path(path.into()), node.node().into())
 }
 
-pub fn join<S: To<Node>, N: To<Node>>(separator: S, node: N) -> Node {
-    let node = node.to();
+pub fn join<S: ToNode, N: ToNode>(separator: S, node: N) -> Node {
+    let node = node.node();
     option(and(node.clone(), repeat(.., and(separator, node))))
 }
 
-pub fn spawn<N: To<Node>>(node: N) -> Node {
-    Node::Spawn(node.to().into())
+pub fn spawn<N: ToNode>(node: N) -> Node {
+    Node::Spawn(node.node().into())
 }
 
 #[macro_export]
 macro_rules! all {
     () => {{ Node::True }};
-    ($node: expr) => {{ To::<Node>::to($node) }};
+    ($node: expr) => {{ ToNode::node($node) }};
     ($node: expr, $($nodes: expr),+) => {{ and($node, all!($($nodes),+)) }};
 }
 
 #[macro_export]
 macro_rules! any {
     () => {{ Node::False }};
-    ($node: expr) => {{ To::<Node>::to($node) }};
+    ($node: expr) => {{ ToNode::node($node) }};
     ($node: expr, $($nodes: expr),+) => {{ or($node, any!($($nodes),+)) }};
 }
-
-// #[macro_export]
-// macro_rules! spawn {
-//     ($kind: expr, $($nodes: expr),+) => {{ define($kind, spawn(all!($($nodes),+))) }};
-// }
-
-// #[macro_export]
-// macro_rules! define {
-//     ($name: expr, $($nodes: expr),+) => {{ define($name, all!($($nodes),+)) }};
-// }
-
-// #[macro_export]
-// macro_rules! option {
-//     ($($nodes: expr),+) => {{ option(all!($($nodes),+)) }};
-// }

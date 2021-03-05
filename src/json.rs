@@ -40,8 +40,10 @@ pub fn convert(tree: &Tree) -> Option<Syntax> {
 }
 
 pub fn node() -> Node {
+    let space = || repeat(.., any!(' ', '\n', '\r', '\t'));
+    let wrap = |symbol: char| all!(space(), symbol, space());
     let digit = || all!('0'..='9');
-    let pair = || all!(&"string", ':', &"value");
+    let pair = || all!(&"string", wrap(':'), &"value");
     let hex = || all!('u', repeat(4..4, any!(digit(), 'a'..='f', 'A'..='F')));
     let escape = || all!('\\', any!('\\', '/', '"', 'b', 'f', 'n', 'r', 't', hex()));
     let letter = || any!(escape(), 'a'..='z', 'A'..'Z');
@@ -54,13 +56,22 @@ pub fn node() -> Node {
             "value",
             any!(&"null", &"true", &"false", &"string", &"array", &"object", &"number")
         ),
-        define("null", spawn("null")),
-        define("true", spawn("true")),
-        define("false", spawn("false")),
-        define("string", all!('"', spawn(repeat(.., letter())), '"')),
-        define("array", all!('[', spawn(join(',', &"value")), ']')),
-        define("object", all!('{', spawn(join(',', pair())), '}')),
-        define("number", spawn(number()))
+        define("null", all!(space(), spawn("null"), space())),
+        define("true", all!(space(), spawn("true"), space())),
+        define("false", all!(space(), spawn("false"), space())),
+        define(
+            "string",
+            all!(space(), '"', spawn(repeat(.., letter())), '"', space())
+        ),
+        define(
+            "array",
+            all!(wrap('['), spawn(join(wrap(','), &"value")), wrap(']'))
+        ),
+        define(
+            "object",
+            all!(wrap('{'), spawn(join(wrap(','), pair())), wrap('}'))
+        ),
+        define("number", spawn(all!(space(), number(), space())))
     )
 }
 

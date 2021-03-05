@@ -19,26 +19,26 @@ pub struct State<'a> {
     pub precedence: usize,
 }
 
-impl To<Node> for char {
-    fn to(self) -> Node {
+impl ToNode for char {
+    fn node(self) -> Node {
         Node::Symbol(self)
     }
 }
 
-impl To<Node> for &str {
-    fn to(self) -> Node {
+impl ToNode for &str {
+    fn node(self) -> Node {
         all(self.chars().map(symbol).collect())
     }
 }
 
-impl To<Node> for Range<char> {
-    fn to(self) -> Node {
+impl ToNode for Range<char> {
+    fn node(self) -> Node {
         range(self.start, self.end)
     }
 }
 
-impl To<Node> for RangeInclusive<char> {
-    fn to(self) -> Node {
+impl ToNode for RangeInclusive<char> {
+    fn node(self) -> Node {
         range(*self.start(), *self.end())
     }
 }
@@ -209,15 +209,15 @@ pub fn parse<'a>(text: &'a str, path: &'a str, node: Node) -> Option<Tree<'a>> {
     }
 }
 
-pub fn prefix<N: To<Node>>(precedence: usize, node: N) -> Node {
-    Node::Precedence(precedence, Bind::None, node.to().into())
+pub fn prefix<N: ToNode>(precedence: usize, node: N) -> Node {
+    Node::Precedence(precedence, Bind::None, node.node().into())
 }
 
-pub fn postfix<N: To<Node>>(precedence: usize, bind: Bind, node: N) -> Node {
-    Node::Precedence(precedence, bind, node.to().into())
+pub fn postfix<N: ToNode>(precedence: usize, bind: Bind, node: N) -> Node {
+    Node::Precedence(precedence, bind, node.node().into())
 }
 
-pub fn infix<L: To<Node>, R: To<Node>>(prefix: L, postfix: R) -> Node {
+pub fn infix<L: ToNode, R: ToNode>(prefix: L, postfix: R) -> Node {
     and(prefix, repeat(.., postfix))
 }
 

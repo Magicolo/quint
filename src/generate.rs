@@ -60,7 +60,7 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
             Node::Reference(identifier) => {
                 let identifier = context.identifier(identifier);
                 match context.references.get(&identifier) {
-                    Some(parser) => parser.clone(),
+                    Some(generator) => generator.clone(),
                     None => Generator(Rc::new(move |state, context| {
                         match context.references.get(&identifier) {
                             Some(generator) => generator.0(state, context),
