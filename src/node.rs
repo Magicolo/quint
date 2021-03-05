@@ -21,10 +21,10 @@ pub enum Node {
     False,
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
-    Definition(Identifier, Box<Self>),
-    Reference(Identifier),
+    Define(Identifier, Box<Self>),
+    Refer(Identifier),
 
-    Precedence(usize, Bind, Box<Self>),
+    Precede(usize, Bind, Box<Self>),
     Spawn(Box<Self>),
     Symbol(char),
 }
@@ -51,31 +51,32 @@ impl ToNode for &&str {
 }
 
 impl<T: Clone> Context<T> {
-    pub fn resolve(node: Node) -> (Node, Context<T>) {
-        let mut context = Context {
+    pub fn new() -> Self {
+        Self {
             references: HashMap::new(),
             identifiers: HashMap::new(),
-        };
-        let node = node
-            .descend(|node| match node {
-                Node::And(left, right) if *left == Node::True => *right,
-                Node::And(left, right) if *right == Node::True => *left,
-                Node::And(left, _) if *left == Node::False => Node::False,
-                Node::Or(left, right) if *left == Node::False => *right,
-                Node::Or(left, right) if *right == Node::False => *left,
-                Node::Or(left, _) if *left == Node::True => Node::True,
-                _ => node,
-            })
-            .descend(|node| match node {
-                Node::Definition(identifier, node) => {
-                    Node::Definition(Identifier::Unique(context.identifier(&identifier)), node)
-                }
-                _ => node,
-            });
-        (node, context)
+        }
     }
 
-    pub fn identifier(&mut self, identifier: &Identifier) -> usize {
+    pub fn resolve(&mut self, node: Node) -> Node {
+        node.descend(|node| match node {
+            Node::And(left, right) if *left == Node::True => *right,
+            Node::And(left, right) if *right == Node::True => *left,
+            Node::And(left, _) if *left == Node::False => Node::False,
+            Node::Or(left, right) if *left == Node::False => *right,
+            Node::Or(left, right) if *right == Node::False => *left,
+            Node::Or(left, _) if *left == Node::True => Node::True,
+            _ => node,
+        })
+        .descend(|node| match node {
+            Node::Define(identifier, node) => {
+                Node::Define(Identifier::Unique(self.identify(&identifier)), node)
+            }
+            _ => node,
+        })
+    }
+
+    pub fn identify(&mut self, identifier: &Identifier) -> usize {
         match identifier {
             Identifier::Unique(identifier) => *identifier,
             Identifier::Path(path) => {
@@ -90,20 +91,20 @@ impl<T: Clone> Context<T> {
         }
     }
 
-    pub fn reference(&self, identifier: &Identifier) -> Option<T> {
+    pub fn refer(&mut self, identifier: &Identifier, reference: T) {
+        let identifier = self.identify(identifier);
+        self.references.insert(identifier, reference);
+    }
+
+    pub fn identifier(&self, identifier: &Identifier) -> Option<usize> {
         Some(match identifier {
-            Identifier::Unique(identifier) => self.references.get(identifier)?.clone(),
-            Identifier::Path(path) => self
-                .identifiers
-                .get(path)
-                .and_then(|identifier| self.references.get(identifier))?
-                .clone(),
+            Identifier::Unique(identifier) => *identifier,
+            Identifier::Path(path) => *self.identifiers.get(path)?,
         })
     }
 
-    pub fn add(&mut self, identifier: &Identifier, value: T) {
-        let identifier = self.identifier(identifier);
-        self.references.insert(identifier, value);
+    pub fn reference(&self, identifier: &Identifier) -> Option<T> {
+        Some(self.references.get(&self.identifier(identifier)?)?.clone())
     }
 }
 
@@ -118,12 +119,10 @@ impl Node {
             let node = match node {
                 Node::And(left, right) => and(next(*left, map), next(*right, map)),
                 Node::Or(left, right) => or(next(*left, map), next(*right, map)),
-                Node::Definition(identifier, node) => {
-                    Node::Definition(identifier, next(*node, map).into())
-                }
+                Node::Define(identifier, node) => Node::Define(identifier, next(*node, map).into()),
                 Node::Spawn(node) => Node::Spawn(next(*node, map).into()),
-                Node::Precedence(precedence, bind, node) => {
-                    Node::Precedence(precedence, bind, next(*node, map).into())
+                Node::Precede(precedence, bind, node) => {
+                    Node::Precede(precedence, bind, next(*node, map).into())
                 }
                 _ => node,
             };
@@ -147,8 +146,8 @@ impl Node {
         fn any<'a>(node: &'a Node, nodes: &mut Vec<&'a Node>) {
             match node {
                 Node::Or(left, right) => {
-                    all(left, nodes);
-                    all(right, nodes);
+                    any(left, nodes);
+                    any(right, nodes);
                 }
                 _ => nodes.push(node),
             }
@@ -219,19 +218,21 @@ pub fn repeat<R: RangeBounds<usize>, N: ToNode>(range: R, node: N) -> Node {
         Some(_) => Node::True,
         None => {
             let identifier = Identifier::Unique(Node::unique());
-            let node = option(and(node, Node::Reference(identifier.clone())));
-            and(Node::Definition(identifier, node.clone().into()), node)
+            let refer = Node::Refer(identifier.clone());
+            let node = option(and(node, refer.clone()));
+            let define = Node::Define(identifier, node.into());
+            and(define, refer)
         }
     };
     and(left, right)
 }
 
 pub fn refer(name: &str) -> Node {
-    Node::Reference(Identifier::Path(name.into()))
+    Node::Refer(Identifier::Path(name.into()))
 }
 
 pub fn define<N: ToNode>(path: &str, node: N) -> Node {
-    Node::Definition(Identifier::Path(path.into()), node.node().into())
+    Node::Define(Identifier::Path(path.into()), node.node().into())
 }
 
 pub fn join<S: ToNode, N: ToNode>(separator: S, node: N) -> Node {
@@ -248,6 +249,7 @@ macro_rules! all {
     () => {{ Node::True }};
     ($node: expr) => {{ ToNode::node($node) }};
     ($node: expr, $($nodes: expr),+) => {{ and($node, all!($($nodes),+)) }};
+    ($node: expr, $($nodes: expr),+,) => {{ and($node, all!($($nodes),+)) }};
 }
 
 #[macro_export]
@@ -255,4 +257,5 @@ macro_rules! any {
     () => {{ Node::False }};
     ($node: expr) => {{ ToNode::node($node) }};
     ($node: expr, $($nodes: expr),+) => {{ or($node, any!($($nodes),+)) }};
+    ($node: expr, $($nodes: expr),+,) => {{ or($node, any!($($nodes),+)) }};
 }

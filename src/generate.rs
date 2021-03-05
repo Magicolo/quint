@@ -21,13 +21,10 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
             Node::True => Generator(Rc::new(|_, _| true)),
             Node::False => Generator(Rc::new(|_, _| false)),
             Node::And(_, _) => {
-                let generators: Vec<_> = node
-                    .flatten()
-                    .iter()
-                    .map(|node| next(node, context))
-                    .collect();
+                let nodes = node.flatten();
+                let generators: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
                 Generator(Rc::new(move |state, context| {
-                    for generator in generators.iter() {
+                    for generator in &generators {
                         if generator.0(state, context) {
                             continue;
                         }
@@ -37,11 +34,8 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                 }))
             }
             Node::Or(_, _) => {
-                let generators: Vec<_> = node
-                    .flatten()
-                    .iter()
-                    .map(|node| next(node, context))
-                    .collect();
+                let nodes = node.flatten();
+                let generators: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
                 Generator(Rc::new(move |state, context| {
                     for generator in generators.choose_multiple(&mut state.random, generators.len())
                     {
@@ -52,22 +46,19 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                     false
                 }))
             }
-            Node::Definition(identifier, node) => {
+            Node::Define(identifier, node) => {
                 let generator = next(node, context);
-                context.add(identifier, generator);
+                context.refer(identifier, generator);
                 next(&Node::True, context)
             }
-            Node::Reference(identifier) => {
-                let identifier = context.identifier(identifier);
-                match context.references.get(&identifier) {
-                    Some(generator) => generator.clone(),
-                    None => Generator(Rc::new(move |state, context| {
-                        match context.references.get(&identifier) {
-                            Some(generator) => generator.0(state, context),
-                            None => false,
-                        }
-                    })),
-                }
+            Node::Refer(identifier) => {
+                let identifier = context.identify(identifier);
+                Generator(Rc::new(move |state, context| {
+                    match context.references.get(&identifier) {
+                        Some(generator) => generator.0(state, context),
+                        None => false,
+                    }
+                }))
             }
             Node::Spawn(node) => next(node, context),
             Node::Symbol(symbol) => {
@@ -77,7 +68,7 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                     true
                 }))
             }
-            Node::Precedence(precedence, bind, node) => {
+            Node::Precede(precedence, bind, node) => {
                 let precedence = *precedence;
                 let bind = bind.clone();
                 let generator = next(node, context);
@@ -95,7 +86,8 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
         }
     }
 
-    let (node, mut context) = Context::resolve(node);
+    let mut context = Context::new();
+    let node = context.resolve(node);
     (next(&node, &mut context), context)
 }
 

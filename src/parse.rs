@@ -74,13 +74,10 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
             Node::True => Parser(Rc::new(|_, _| true)),
             Node::False => Parser(Rc::new(|_, _| false)),
             Node::And(_, _) => {
-                let parsers: Vec<_> = node
-                    .flatten()
-                    .iter()
-                    .map(|node| next(node, context))
-                    .collect();
+                let nodes = node.flatten();
+                let parsers: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
                 Parser(Rc::new(move |state, context| {
-                    for parser in parsers.iter() {
+                    for parser in &parsers {
                         if parser.0(state, context) {
                             continue;
                         }
@@ -90,13 +87,10 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                 }))
             }
             Node::Or(_, _) => {
-                let parsers: Vec<_> = node
-                    .flatten()
-                    .iter()
-                    .map(|node| next(node, context))
-                    .collect();
+                let nodes = node.flatten();
+                let parsers: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
                 Parser(Rc::new(move |state, context| {
-                    for parser in parsers.iter() {
+                    for parser in &parsers {
                         let mut local = state.clone();
                         if parser.0(&mut local, context) {
                             *state = local;
@@ -106,25 +100,22 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     false
                 }))
             }
-            Node::Definition(identifier, node) => {
+            Node::Define(identifier, node) => {
                 let parser = next(node, context);
-                context.add(identifier, parser);
+                context.refer(identifier, parser);
                 next(&Node::True, context)
             }
-            Node::Reference(Identifier::Unique(identifier)) => {
+            Node::Refer(Identifier::Unique(identifier)) => {
                 let identifier = *identifier;
-                match context.references.get(&identifier) {
-                    Some(parser) => parser.clone(),
-                    None => Parser(Rc::new(move |state, context| {
-                        match context.references.get(&identifier) {
-                            Some(parser) => parser.0(state, context),
-                            None => false,
-                        }
-                    })),
-                }
+                Parser(Rc::new(move |state, context| {
+                    match context.references.get(&identifier) {
+                        Some(parser) => parser.0(state, context),
+                        None => false,
+                    }
+                }))
             }
-            Node::Reference(Identifier::Path(path)) => {
-                let identifier = context.identifier(&Identifier::Path(path.clone()));
+            Node::Refer(Identifier::Path(path)) => {
+                let identifier = context.identify(&Identifier::Path(path.clone()));
                 let path = path.clone();
                 Parser(Rc::new(move |state, context| {
                     match context.references.get(&identifier) {
@@ -169,7 +160,7 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     }
                 }))
             }
-            Node::Precedence(precedence, bind, node) => {
+            Node::Precede(precedence, bind, node) => {
                 let precedence = *precedence;
                 let bind = bind.clone();
                 let parser = next(node, context);
@@ -187,7 +178,8 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
         }
     }
 
-    let (node, mut context) = Context::resolve(node);
+    let mut context = Context::new();
+    let node = context.resolve(node);
     (next(&node, &mut context), context)
 }
 
@@ -210,14 +202,14 @@ pub fn parse<'a>(text: &'a str, path: &'a str, node: Node) -> Option<Tree<'a>> {
 }
 
 pub fn prefix<N: ToNode>(precedence: usize, node: N) -> Node {
-    Node::Precedence(precedence, Bind::None, node.node().into())
+    Node::Precede(precedence, Bind::None, node.node().into())
 }
 
 pub fn postfix<N: ToNode>(precedence: usize, bind: Bind, node: N) -> Node {
-    Node::Precedence(precedence, bind, node.node().into())
+    Node::Precede(precedence, bind, node.node().into())
 }
 
-pub fn infix<L: ToNode, R: ToNode>(prefix: L, postfix: R) -> Node {
+pub fn precede<L: ToNode, R: ToNode>(prefix: L, postfix: R) -> Node {
     and(prefix, repeat(.., postfix))
 }
 

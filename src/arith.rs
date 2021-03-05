@@ -2,11 +2,13 @@ use crate::node::*;
 use crate::parse::*;
 use crate::*;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unary {
     Negate,
     Decrement,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Binary {
     Add,
     Subtract,
@@ -14,6 +16,7 @@ pub enum Binary {
     Divide,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Syntax {
     Number(u64),
     Unary(Unary, Box<Syntax>),
@@ -44,47 +47,33 @@ pub fn convert(tree: &Tree) -> Option<Syntax> {
     })
 }
 
-// pub fn node() -> Node {
-//     let digit = || all!('0'..='9');
-//     all!(
-//         &"expression",
-//         define!("expression", infix(&"prefix", &"postfix")),
-//         define!(
-//             "prefix",
-//             prefix(
-//                 100,
-//                 any!(
-//                     spawn!("negate", '-', &"expression"),
-//                     spawn!("group", '(', &"expression", ')'),
-//                     spawn!("number", repeat(1.., digit()))
-//                 )
-//             )
-//         ),
-//         define!(
-//             "postfix",
-//             any!(
-//                 spawn!("decrement", postfix(120, Bind::Left, "--")),
-//                 spawn!(
-//                     "multiply",
-//                     postfix(20, Bind::Left, all!('*', &"expression"))
-//                 ),
-//                 spawn!("divide", postfix(20, Bind::Left, all!('/', &"expression"))),
-//                 spawn!("add", postfix(10, Bind::Left, all!('+', &"expression"))),
-//                 spawn!(
-//                     "subtract",
-//                     postfix(10, Bind::Left, all!('-', &"expression"))
-//                 )
-//             )
-//         )
-//     )
-// }
+pub fn node() -> Node {
+    let digit = || all!('0'..='9');
+    let binary =
+        |symbol: char, precedence, bind| postfix(precedence, bind, all!(symbol, &"expression"));
+    all!(
+        define(
+            "expression",
+            precede(
+                any!(&"negate", &"group", &"number"),
+                any!(&"decrement", &"multiply", &"divide", &"add", &"subtract")
+            )
+        ),
+        define("negate", spawn(prefix(100, all!('-', &"expression")))),
+        define("group", spawn(prefix(100, all!('(', &"expression", ')')))),
+        define("number", spawn(prefix(100, all!(repeat(1.., digit()))))),
+        define("decrement", spawn(postfix(120, Bind::Left, "--"))),
+        define("multiply", spawn(binary('*', 20, Bind::Left))),
+        define("divide", spawn(binary('/', 20, Bind::Left))),
+        define("add", spawn(binary('+', 10, Bind::Left))),
+        define("subtract", spawn(binary('-', 10, Bind::Left))),
+    )
+}
 
 pub fn parse(text: &str) -> Option<Syntax> {
-    None
-    // parse::parse(text, node()).and_then(|tree| convert(&tree))
+    parse::parse(text, "expression", node()).and_then(|tree| convert(&tree))
 }
 
 pub fn generate() -> Option<String> {
-    None
-    // generate::generate(node())
+    generate::generate(node(), "expression")
 }

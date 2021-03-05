@@ -4,7 +4,10 @@ use quint::parse::*;
 use quint::*;
 
 fn test(text: &str, node: Node, success: bool) {
-    assert_eq!(success, parse(text, "root", node).is_some());
+    assert_eq!(
+        success,
+        parse(text, "root", define("root", spawn(node))).is_some()
+    );
 }
 
 #[test]
@@ -90,8 +93,8 @@ fn join_boba() {
 #[test]
 fn spawn_boba() {
     let tree = parse("Fett", "Boba", define("Boba", spawn("Fett"))).unwrap();
-    assert_eq!("Boba", tree.children[0].kind);
-    assert_eq!("Fett", tree.children[0].value);
+    assert_eq!("Boba", tree.kind);
+    assert_eq!("Fett", tree.value);
 }
 
 #[test]

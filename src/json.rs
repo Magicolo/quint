@@ -71,7 +71,7 @@ pub fn node() -> Node {
             "object",
             all!(wrap('{'), spawn(join(wrap(','), pair())), wrap('}'))
         ),
-        define("number", spawn(all!(space(), number(), space())))
+        define("number", all!(space(), spawn(number()), space())),
     )
 }
 
