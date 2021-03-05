@@ -1,22 +1,43 @@
 use crate::node::*;
+use crate::parse::*;
 use crate::*;
 
-pub enum Json {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Syntax {
     Null,
     Number(f64),
     Boolean(bool),
     String(String),
-    Array(Vec<Json>),
-    Object(Vec<(Json, Json)>),
+    Array(Vec<Syntax>),
+    Object(Vec<(Syntax, Syntax)>),
 }
 
-/*
-spawn!(|_| Json::Null, "null")
-spawn!(|_| Json::Boolean(true), "true")
-spawn!(|_| Json::Boolean(false), "false")
-spawn!(|value| Json::String(value.into()), '"', repeat(.., letter()), '"')
-spawn!(|value| Json::Number(value.into()), '"', repeat(.., letter()), '"')
-*/
+fn convert(tree: &Tree) -> Option<Syntax> {
+    Some(match tree.kind.as_str() {
+        "root" => convert(tree.children.first()?)?,
+        "null" => Syntax::Null,
+        "number" => Syntax::Number(tree.value.parse().ok()?),
+        "true" => Syntax::Boolean(true),
+        "false" => Syntax::Boolean(false),
+        "string" => Syntax::String(tree.value.into()),
+        "array" => {
+            let mut items = Vec::new();
+            for child in tree.children.iter() {
+                items.push(convert(child)?);
+            }
+            Syntax::Array(items)
+        }
+        "object" => {
+            let mut pairs = Vec::new();
+            let mut children = tree.children.iter();
+            while let (Some(key), Some(value)) = (children.next(), children.next()) {
+                pairs.push((convert(key)?, convert(value)?));
+            }
+            Syntax::Object(pairs)
+        }
+        _ => panic!("Invalid kind '{}'.", tree.kind),
+    })
+}
 
 pub fn node() -> Node {
     let digit = || all!('0'..='9');
@@ -30,7 +51,8 @@ pub fn node() -> Node {
             "value",
             any!(
                 spawn!("null", "null"),
-                spawn!("boolean", any!("true", "false")),
+                spawn!("true", "true"),
+                spawn!("false", "false"),
                 spawn!("string", '"', repeat(.., letter()), '"'),
                 spawn!("array", '[', join(',', &"value"), ']'),
                 spawn!("object", '{', join(',', pair()), '}'),
@@ -44,4 +66,12 @@ pub fn node() -> Node {
             )
         )
     )
+}
+
+pub fn parse(text: &str) -> Option<Syntax> {
+    parse::parse(text, node()).and_then(|tree| convert(&tree))
+}
+
+pub fn generate() -> Option<String> {
+    generate::generate(node())
 }

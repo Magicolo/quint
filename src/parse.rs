@@ -4,7 +4,7 @@ use std::mem;
 use std::ops::{Range, RangeInclusive};
 use std::rc::Rc;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Tree<'a> {
     pub kind: String,
     pub value: &'a str,
@@ -14,15 +14,24 @@ pub struct Tree<'a> {
 #[derive(Debug, Clone)]
 pub struct State<'a> {
     pub index: usize,
+    pub text: &'a str,
     pub tree: Tree<'a>,
     pub precedence: usize,
 }
 
-#[derive(Default)]
 pub struct Context<'a> {
-    pub text: &'a str,
     pub references: HashMap<usize, Rc<Parse<'a>>>,
     pub identifiers: HashMap<String, usize>,
+}
+
+impl<'a> Tree<'a> {
+    pub fn root(value: &'a str) -> Tree<'a> {
+        Tree {
+            kind: "root".into(),
+            value: value,
+            children: Vec::new(),
+        }
+    }
 }
 
 impl To<Node> for char {
@@ -72,7 +81,7 @@ pub type Parse<'a> = dyn Fn(&mut State<'a>, &Context<'a>) -> bool + 'a;
     TODO: run each branch of an 'Or' in parallel?
 */
 
-pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
+pub fn parser<'a>(node: Node) -> (Rc<Parse<'a>>, Context<'a>) {
     fn all<'a>(node: &Node, context: &mut Context<'a>, parses: &mut Vec<Rc<Parse<'a>>>) {
         match node {
             Node::And(left, right) => {
@@ -101,7 +110,7 @@ pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
                 let mut parses = Vec::new();
                 all(node, context, &mut parses);
                 Rc::new(move |state, context| {
-                    for parse in &parses {
+                    for parse in parses.iter() {
                         if parse(state, context) {
                             continue;
                         }
@@ -114,7 +123,7 @@ pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
                 let mut parses = Vec::new();
                 any(node, context, &mut parses);
                 Rc::new(move |state, context| {
-                    for parse in &parses {
+                    for parse in parses.iter() {
                         let mut local = state.clone();
                         if parse(&mut local, context) {
                             *state = local;
@@ -158,7 +167,7 @@ pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
                     );
                     if parse(state, context) {
                         let mut child = mem::replace(&mut state.tree, parent);
-                        child.value = &context.text[index..state.index];
+                        child.value = &state.text[index..state.index];
                         state.tree.children.push(child);
                         true
                     } else {
@@ -169,8 +178,8 @@ pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
             Node::Symbol(symbol) => {
                 let symbol = *symbol;
                 let size = symbol.len_utf8();
-                Rc::new(move |state, context| {
-                    let text = context.text;
+                Rc::new(move |state, _| {
+                    let text = state.text;
                     if state.index < text.len() && text[state.index..].starts_with(symbol) {
                         state.index += size;
                         true
@@ -198,52 +207,24 @@ pub fn parser<'a>(node: &Node) -> (Rc<Parse<'a>>, Context<'a>) {
         }
     }
 
-    let mut context = Context::default();
-    let node = node
-        .clone()
-        .descend(|node| match node {
-            Node::And(left, right) if *left == Node::True => *right,
-            Node::And(left, right) if *right == Node::True => *left,
-            Node::And(left, _) if *left == Node::False => Node::False,
-            Node::Or(left, right) if *left == Node::False => *right,
-            Node::Or(left, _) if *left == Node::True => Node::True,
-            _ => node,
-        })
-        .descend(|node| match node {
-            Node::Definition(Identifier::Name(name), node) => {
-                let identifier = Node::unique();
-                context.identifiers.insert(name.clone(), identifier);
-                Node::Definition(Identifier::Unique(identifier), node)
-            }
-            _ => node,
-        })
-        .descend(|node| match node {
-            Node::Reference(Identifier::Name(name)) => {
-                Node::Reference(Identifier::Unique(match context.identifiers.get(&name) {
-                    Some(identifier) => *identifier,
-                    None => Node::unique(),
-                }))
-            }
-            _ => node,
-        });
-
+    let (node, identifiers) = resolve(node);
+    let mut context = Context {
+        references: HashMap::new(),
+        identifiers,
+    };
     (next(&node, &mut context), context)
 }
 
-pub fn parse<'a>(text: &'a str, node: &Node) -> Option<Tree<'a>> {
-    let tree = Tree {
-        kind: "root".into(),
-        value: text,
-        children: Vec::new(),
-    };
+pub fn parse<'a>(text: &'a str, node: Node) -> Option<Tree<'a>> {
+    let (parse, context) = parser(node);
     let mut state = State {
         index: 0,
-        tree,
+        text,
+        tree: Tree::root(text),
         precedence: 0,
     };
-    let (parse, mut context) = parser(node);
-    context.text = text;
-    if parse(&mut state, &context) && state.index == context.text.len() {
+
+    if parse(&mut state, &context) && state.index == state.text.len() {
         Some(state.tree)
     } else {
         None

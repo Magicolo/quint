@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::ops::{Bound, RangeBounds};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Identifier {
     Unique(usize),
-    Name(String),
+    Path(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -58,7 +59,7 @@ impl Node {
                 Node::Definition(identifier, node) => {
                     Node::Definition(identifier, next(*node, map).into())
                 }
-                Node::Spawn(kind, node) => Node::Spawn(kind, Box::new(next(*node, map))),
+                Node::Spawn(kind, node) => Node::Spawn(kind, next(*node, map).into()),
                 Node::Precedence(precedence, bind, node) => {
                     Node::Precedence(precedence, bind, next(*node, map).into())
                 }
@@ -127,29 +128,62 @@ pub fn repeat<R: RangeBounds<usize>, N: To<Node>>(range: R, node: N) -> Node {
         None => {
             let identifier = Identifier::Unique(Node::unique());
             let node = option(and(node, Node::Reference(identifier.clone())));
-            and(Node::Definition(identifier, Box::new(node.clone())), node)
+            and(Node::Definition(identifier, node.clone().into()), node)
         }
     };
     and(left, right)
 }
 
 pub fn refer(name: &str) -> Node {
-    Node::Reference(Identifier::Name(name.into()))
+    Node::Reference(Identifier::Path(name.into()))
 }
 
 pub fn define<N: To<Node>>(name: &str, node: N) -> Node {
-    Node::Definition(Identifier::Name(name.into()), Box::new(node.to()))
+    Node::Definition(Identifier::Path(name.into()), node.to().into())
 }
 
 pub fn join<S: To<Node>, N: To<Node>>(separator: S, node: N) -> Node {
-    repeat(.., and(node, option(separator)))
+    let node = node.to();
+    option(and(node.clone(), repeat(.., and(separator, node))))
 }
 
 pub fn spawn<N: To<Node>>(kind: &str, node: N) -> Node {
     and(
-        define(kind, Node::Spawn(kind.into(), Box::new(node.to()))),
+        define(kind, Node::Spawn(kind.into(), node.to().into())),
         refer(kind),
     )
+}
+
+pub fn resolve(node: Node) -> (Node, HashMap<String, usize>) {
+    let mut identifiers = HashMap::new();
+    let node = node
+        .descend(|node| match node {
+            Node::And(left, right) if *left == Node::True => *right,
+            Node::And(left, right) if *right == Node::True => *left,
+            Node::And(left, _) if *left == Node::False => Node::False,
+            Node::Or(left, right) if *left == Node::False => *right,
+            Node::Or(left, right) if *right == Node::False => *left,
+            Node::Or(left, _) if *left == Node::True => Node::True,
+            _ => node,
+        })
+        .descend(|node| match node {
+            Node::Definition(Identifier::Path(name), node) => {
+                let identifier = Node::unique();
+                identifiers.insert(name.clone(), identifier);
+                Node::Definition(Identifier::Unique(identifier), node)
+            }
+            _ => node,
+        })
+        .descend(|node| match node {
+            Node::Reference(Identifier::Path(name)) => {
+                Node::Reference(Identifier::Unique(match identifiers.get(&name) {
+                    Some(identifier) => *identifier,
+                    None => Node::unique(),
+                }))
+            }
+            _ => node,
+        });
+    (node, identifiers)
 }
 
 #[macro_export]

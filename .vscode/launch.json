@@ -5,11 +5,25 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(Windows) Launch",
+            "name": "Test",
             "type": "lldb",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "cargo": { "args": ["test", "--no-run"], "filter": { "kind": "test" } }
+            "cargo": { "args": ["test", "--no-run"], "filter": { "name": "test" } }
+        },
+        {
+            "name": "Json",
+            "type": "lldb",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "cargo": { "args": ["test", "--no-run"], "filter": { "name": "json" } }
+        },
+        {
+            "name": "Arith",
+            "type": "lldb",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "cargo": { "args": ["test", "--no-run"], "filter": { "name": "arith" } }
         }
     ]
 }
