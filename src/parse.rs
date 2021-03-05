@@ -1,12 +1,11 @@
 use crate::node::*;
-use std::collections::HashMap;
 use std::mem;
 use std::ops::{Range, RangeInclusive};
 use std::rc::Rc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Tree<'a> {
-    pub kind: String,
+    pub kind: String, // TODO: try to replace with '&str'
     pub value: &'a str,
     pub children: Vec<Tree<'a>>,
 }
@@ -15,23 +14,9 @@ pub struct Tree<'a> {
 pub struct State<'a> {
     pub index: usize,
     pub text: &'a str,
-    pub tree: Tree<'a>,
+    pub path: String, // TODO: try to replace with '&str'
+    pub trees: Vec<Tree<'a>>,
     pub precedence: usize,
-}
-
-pub struct Context<'a> {
-    pub references: HashMap<usize, Rc<Parse<'a>>>,
-    pub identifiers: HashMap<String, usize>,
-}
-
-impl<'a> Tree<'a> {
-    pub fn root(value: &'a str) -> Tree<'a> {
-        Tree {
-            kind: "root".into(),
-            value: value,
-            children: Vec::new(),
-        }
-    }
 }
 
 impl To<Node> for char {
@@ -58,7 +43,9 @@ impl To<Node> for RangeInclusive<char> {
     }
 }
 
-pub type Parse<'a> = dyn Fn(&mut State<'a>, &Context<'a>) -> bool + 'a;
+#[derive(Clone)]
+pub struct Parser<'a>(Rc<Parse<'a>>);
+type Parse<'a> = dyn Fn(&mut State<'a>, &Context<Parser<'a>>) -> bool + 'a;
 
 /*
     The state can be mutable but must be cloned when facing an 'Or'.
@@ -81,104 +68,98 @@ pub type Parse<'a> = dyn Fn(&mut State<'a>, &Context<'a>) -> bool + 'a;
     TODO: run each branch of an 'Or' in parallel?
 */
 
-pub fn parser<'a>(node: Node) -> (Rc<Parse<'a>>, Context<'a>) {
-    fn all<'a>(node: &Node, context: &mut Context<'a>, parses: &mut Vec<Rc<Parse<'a>>>) {
+fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
+    fn next<'a>(node: &Node, context: &mut Context<Parser<'a>>) -> Parser<'a> {
         match node {
-            Node::And(left, right) => {
-                all(left, context, parses);
-                all(right, context, parses);
-            }
-            _ => parses.push(next(node, context)),
-        }
-    }
-
-    fn any<'a>(node: &Node, context: &mut Context<'a>, parses: &mut Vec<Rc<Parse<'a>>>) {
-        match node {
-            Node::Or(left, right) => {
-                any(left, context, parses);
-                any(right, context, parses);
-            }
-            _ => parses.push(next(node, context)),
-        }
-    }
-
-    fn next<'a>(node: &Node, context: &mut Context<'a>) -> Rc<Parse<'a>> {
-        match node {
-            Node::True => Rc::new(|_, _| true),
-            Node::False => Rc::new(|_, _| false),
+            Node::True => Parser(Rc::new(|_, _| true)),
+            Node::False => Parser(Rc::new(|_, _| false)),
             Node::And(_, _) => {
-                let mut parses = Vec::new();
-                all(node, context, &mut parses);
-                Rc::new(move |state, context| {
-                    for parse in parses.iter() {
-                        if parse(state, context) {
+                let parsers: Vec<_> = node
+                    .flatten()
+                    .iter()
+                    .map(|node| next(node, context))
+                    .collect();
+                Parser(Rc::new(move |state, context| {
+                    for parser in parsers.iter() {
+                        if parser.0(state, context) {
                             continue;
                         }
                         return false;
                     }
                     true
-                })
+                }))
             }
             Node::Or(_, _) => {
-                let mut parses = Vec::new();
-                any(node, context, &mut parses);
-                Rc::new(move |state, context| {
-                    for parse in parses.iter() {
+                let parsers: Vec<_> = node
+                    .flatten()
+                    .iter()
+                    .map(|node| next(node, context))
+                    .collect();
+                Parser(Rc::new(move |state, context| {
+                    for parser in parsers.iter() {
                         let mut local = state.clone();
-                        if parse(&mut local, context) {
+                        if parser.0(&mut local, context) {
                             *state = local;
                             return true;
                         }
                     }
                     false
-                })
+                }))
             }
-            Node::Definition(Identifier::Unique(identifier), node) => {
-                let parse = next(node, context);
-                context.references.insert(*identifier, parse);
+            Node::Definition(identifier, node) => {
+                let parser = next(node, context);
+                context.add(identifier, parser);
                 next(&Node::True, context)
             }
             Node::Reference(Identifier::Unique(identifier)) => {
-                match context.references.get(identifier) {
-                    Some(parse) => parse.clone(),
-                    None => {
-                        let identifier = *identifier;
-                        Rc::new(move |state, context: &Context| {
-                            match context.references.get(&identifier) {
-                                Some(parse) => parse(state, context),
-                                None => false,
-                            }
-                        })
-                    }
+                let identifier = *identifier;
+                match context.references.get(&identifier) {
+                    Some(parser) => parser.clone(),
+                    None => Parser(Rc::new(move |state, context| {
+                        match context.references.get(&identifier) {
+                            Some(parser) => parser.0(state, context),
+                            None => false,
+                        }
+                    })),
                 }
             }
-            Node::Spawn(kind, node) => {
-                let kind = kind.clone();
-                let parse = next(node, context);
-                Rc::new(move |state, context| {
+            Node::Reference(Identifier::Path(path)) => {
+                let identifier = context.identifier(&Identifier::Path(path.clone()));
+                let path = path.clone();
+                Parser(Rc::new(move |state, context| {
+                    match context.references.get(&identifier) {
+                        Some(parser) => {
+                            let path = mem::replace(&mut state.path, path.clone());
+                            let result = parser.0(state, context);
+                            state.path = path;
+                            result
+                        }
+                        None => false,
+                    }
+                }))
+            }
+            Node::Spawn(node) => {
+                let parser = next(node, context);
+                Parser(Rc::new(move |state, context| {
                     let index = state.index;
-                    let parent = mem::replace(
-                        &mut state.tree,
-                        Tree {
-                            kind: kind.clone(),
-                            value: "",
-                            children: Vec::new(),
-                        },
-                    );
-                    if parse(state, context) {
-                        let mut child = mem::replace(&mut state.tree, parent);
-                        child.value = &state.text[index..state.index];
-                        state.tree.children.push(child);
+                    let parents = mem::replace(&mut state.trees, Vec::new());
+                    if parser.0(state, context) {
+                        let children = mem::replace(&mut state.trees, parents);
+                        state.trees.push(Tree {
+                            kind: state.path.clone(),
+                            value: &state.text[index..state.index],
+                            children,
+                        });
                         true
                     } else {
                         false
                     }
-                })
+                }))
             }
             Node::Symbol(symbol) => {
                 let symbol = *symbol;
                 let size = symbol.len_utf8();
-                Rc::new(move |state, _| {
+                Parser(Rc::new(move |state, _| {
                     let text = state.text;
                     if state.index < text.len() && text[state.index..].starts_with(symbol) {
                         state.index += size;
@@ -186,46 +167,43 @@ pub fn parser<'a>(node: Node) -> (Rc<Parse<'a>>, Context<'a>) {
                     } else {
                         false
                     }
-                })
+                }))
             }
             Node::Precedence(precedence, bind, node) => {
                 let precedence = *precedence;
                 let bind = bind.clone();
-                let parse = next(node, context);
-                Rc::new(move |state, context| match bind {
+                let parser = next(node, context);
+                Parser(Rc::new(move |state, context| match bind {
                     Bind::Left if precedence <= state.precedence => false,
                     Bind::Right if precedence < state.precedence => false,
                     _ => {
                         let precedence = mem::replace(&mut state.precedence, precedence);
-                        let result = parse(state, context);
+                        let result = parser.0(state, context);
                         state.precedence = precedence;
                         result
                     }
-                })
+                }))
             }
-            _ => panic!("Invalid node {:?}.", node),
         }
     }
 
-    let (node, identifiers) = resolve(node);
-    let mut context = Context {
-        references: HashMap::new(),
-        identifiers,
-    };
+    let (node, mut context) = Context::resolve(node);
     (next(&node, &mut context), context)
 }
 
-pub fn parse<'a>(text: &'a str, node: Node) -> Option<Tree<'a>> {
-    let (parse, context) = parser(node);
+pub fn parse<'a>(text: &'a str, path: &'a str, node: Node) -> Option<Tree<'a>> {
+    let (_, context) = parsers(node);
+    let parser = context.reference(&Identifier::Path(path.into()))?;
     let mut state = State {
         index: 0,
         text,
-        tree: Tree::root(text),
+        path: path.into(),
+        trees: Vec::new(),
         precedence: 0,
     };
 
-    if parse(&mut state, &context) && state.index == state.text.len() {
-        Some(state.tree)
+    if parser.0(&mut state, &context) && state.index == state.text.len() {
+        state.trees.pop()
     } else {
         None
     }

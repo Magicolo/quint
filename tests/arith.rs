@@ -38,11 +38,11 @@ use quint::arith::*;
 //     assert_eq!("negate", tree.children[0].kind);
 // }
 
-#[test]
-fn generate_mixed() {
-    for _ in 0..100 {
-        let text = generate().unwrap();
-        println!("{}", text);
-        parse(&text).unwrap();
-    }
-}
+// #[test]
+// fn generate_mixed() {
+//     for _ in 0..100 {
+//         let text = generate().unwrap();
+//         println!("{}", text);
+//         parse(&text).unwrap();
+//     }
+// }

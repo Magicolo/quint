@@ -44,45 +44,47 @@ pub fn convert(tree: &Tree) -> Option<Syntax> {
     })
 }
 
-pub fn node() -> Node {
-    let digit = || all!('0'..='9');
-    all!(
-        &"expression",
-        define!("expression", infix(&"prefix", &"postfix")),
-        define!(
-            "prefix",
-            prefix(
-                100,
-                any!(
-                    spawn!("negate", '-', &"expression"),
-                    spawn!("group", '(', &"expression", ')'),
-                    spawn!("number", repeat(1.., digit()))
-                )
-            )
-        ),
-        define!(
-            "postfix",
-            any!(
-                spawn!("decrement", postfix(120, Bind::Left, "--")),
-                spawn!(
-                    "multiply",
-                    postfix(20, Bind::Left, all!('*', &"expression"))
-                ),
-                spawn!("divide", postfix(20, Bind::Left, all!('/', &"expression"))),
-                spawn!("add", postfix(10, Bind::Left, all!('+', &"expression"))),
-                spawn!(
-                    "subtract",
-                    postfix(10, Bind::Left, all!('-', &"expression"))
-                )
-            )
-        )
-    )
-}
+// pub fn node() -> Node {
+//     let digit = || all!('0'..='9');
+//     all!(
+//         &"expression",
+//         define!("expression", infix(&"prefix", &"postfix")),
+//         define!(
+//             "prefix",
+//             prefix(
+//                 100,
+//                 any!(
+//                     spawn!("negate", '-', &"expression"),
+//                     spawn!("group", '(', &"expression", ')'),
+//                     spawn!("number", repeat(1.., digit()))
+//                 )
+//             )
+//         ),
+//         define!(
+//             "postfix",
+//             any!(
+//                 spawn!("decrement", postfix(120, Bind::Left, "--")),
+//                 spawn!(
+//                     "multiply",
+//                     postfix(20, Bind::Left, all!('*', &"expression"))
+//                 ),
+//                 spawn!("divide", postfix(20, Bind::Left, all!('/', &"expression"))),
+//                 spawn!("add", postfix(10, Bind::Left, all!('+', &"expression"))),
+//                 spawn!(
+//                     "subtract",
+//                     postfix(10, Bind::Left, all!('-', &"expression"))
+//                 )
+//             )
+//         )
+//     )
+// }
 
 pub fn parse(text: &str) -> Option<Syntax> {
-    parse::parse(text, node()).and_then(|tree| convert(&tree))
+    None
+    // parse::parse(text, node()).and_then(|tree| convert(&tree))
 }
 
 pub fn generate() -> Option<String> {
-    generate::generate(node())
+    None
+    // generate::generate(node())
 }

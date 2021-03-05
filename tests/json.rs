@@ -18,7 +18,7 @@ fn null() {
 
 #[test]
 fn boolean_true() {
-    test(r#"false"#, Syntax::Boolean(false));
+    test(r#"true"#, Syntax::Boolean(true));
 }
 
 #[test]
