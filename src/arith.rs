@@ -35,7 +35,6 @@ pub fn convert(tree: &Tree) -> Option<Syntax> {
         ))
     };
     Some(match tree.kind.as_str() {
-        "root" => convert(tree.children.first()?)?,
         "number" => Syntax::Number(tree.value.parse().ok()?),
         "negate" => unary(Unary::Negate)?,
         "decrement" => unary(Unary::Decrement)?,
@@ -59,8 +58,8 @@ pub fn node() -> Node {
                 any!(&"decrement", &"multiply", &"divide", &"add", &"subtract")
             )
         ),
+        define("group", prefix(100, all!('(', &"expression", ')'))),
         define("negate", spawn(prefix(100, all!('-', &"expression")))),
-        define("group", spawn(prefix(100, all!('(', &"expression", ')')))),
         define("number", spawn(prefix(100, all!(repeat(1.., digit()))))),
         define("decrement", spawn(postfix(120, Bind::Left, "--"))),
         define("multiply", spawn(binary('*', 20, Bind::Left))),

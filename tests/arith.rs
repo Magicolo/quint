@@ -2,11 +2,13 @@ extern crate quint;
 use quint::arith::*;
 
 fn test(text: &str, syntax: Syntax) {
-    assert_eq!(syntax, parse(text).unwrap());
+    let result = parse(text);
+    println!("{:?}", result);
+    assert_eq!(syntax, result.unwrap());
 }
 
 #[test]
-fn arith_add() {
+fn add() {
     test(
         r#"1+2"#,
         Syntax::Binary(
@@ -33,7 +35,7 @@ fn arith_add() {
 }
 
 #[test]
-fn arith_negate() {
+fn negate() {
     test(
         r#"-1"#,
         Syntax::Unary(Unary::Negate, Syntax::Number(1).into()),
