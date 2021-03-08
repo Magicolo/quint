@@ -14,7 +14,6 @@ pub enum Syntax {
 
 pub fn convert(tree: &Tree) -> Option<Syntax> {
     Some(match tree.kind.as_str() {
-        "root" => convert(tree.children.first()?)?,
         "null" => Syntax::Null,
         "number" => Syntax::Number(tree.value.parse().ok()?),
         "true" => Syntax::Boolean(true),
@@ -40,10 +39,12 @@ pub fn convert(tree: &Tree) -> Option<Syntax> {
 }
 
 pub fn node() -> Node {
-    let space = || repeat(.., any!(' ', '\n', '\r', '\t'));
-    let wrap = |symbol: char| all!(space(), symbol, space());
-    let digit = || all!('0'..='9');
+    fn wrap<N: ToNode>(node: N) -> Node {
+        let space = repeat(.., any!(' ', '\n', '\r', '\t'));
+        all!(space.clone(), node, space)
+    }
     let pair = || all!(&"string", wrap(':'), &"value");
+    let digit = || all!('0'..='9');
     let hex = || all!('u', repeat(4..4, any!(digit(), 'a'..='f', 'A'..='F')));
     let escape = || all!('\\', any!('\\', '/', '"', 'b', 'f', 'n', 'r', 't', hex()));
     let letter = || any!(escape(), 'a'..='z', 'A'..'Z');
@@ -56,13 +57,10 @@ pub fn node() -> Node {
             "value",
             any!(&"null", &"true", &"false", &"string", &"array", &"object", &"number")
         ),
-        define("null", all!(space(), spawn("null"), space())),
-        define("true", all!(space(), spawn("true"), space())),
-        define("false", all!(space(), spawn("false"), space())),
-        define(
-            "string",
-            all!(space(), '"', spawn(repeat(.., letter())), '"', space())
-        ),
+        define("null", wrap(spawn("null"))),
+        define("true", wrap(spawn("true"))),
+        define("false", wrap(spawn("false"))),
+        define("string", wrap(all!('"', spawn(repeat(.., letter())), '"'))),
         define(
             "array",
             all!(wrap('['), spawn(join(wrap(','), &"value")), wrap(']'))
@@ -71,7 +69,7 @@ pub fn node() -> Node {
             "object",
             all!(wrap('{'), spawn(join(wrap(','), pair())), wrap('}'))
         ),
-        define("number", all!(space(), spawn(number()), space())),
+        define("number", wrap(spawn(number()))),
     )
 }
 

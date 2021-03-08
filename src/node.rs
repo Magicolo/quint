@@ -16,6 +16,20 @@ pub enum Bind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Set {
+    Value(isize),
+    Add(isize),
+    Copy(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum If {
+    Less,
+    Equal,
+    Greater,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Node {
     True,
     False,
@@ -24,6 +38,9 @@ pub enum Node {
     Define(Identifier, Box<Self>),
     Refer(Identifier),
 
+    // Set(Identifier, Set),
+    // If(Identifier, If, Identifier),
+    // Push(Box<Self>),
     Precede(usize, Bind, Box<Self>),
     Spawn(Box<Self>),
     Symbol(char),
@@ -114,8 +131,8 @@ impl Node {
         COUNTER.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn descend<F: FnMut(Self) -> Self>(self, map: F) -> Self {
-        fn next<F: FnMut(Node) -> Node>(node: Node, map: &mut F) -> Node {
+    pub fn descend(self, map: impl FnMut(Self) -> Self) -> Self {
+        fn next(node: Node, map: &mut impl FnMut(Node) -> Node) -> Node {
             let node = match node {
                 Node::And(left, right) => and(next(*left, map), next(*right, map)),
                 Node::Or(left, right) => or(next(*left, map), next(*right, map)),

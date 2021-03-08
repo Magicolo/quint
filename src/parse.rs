@@ -160,6 +160,39 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     }
                 }))
             }
+            /*
+            - if-else:
+                Or(And(If("left", compare, "right"), if), else)
+            - indent:
+                And(
+                    Set("indent", Value(0)),
+                    Loop(And(
+                        Push(Symbol('\t')),
+                        Set("indent", Add(1))
+                    )),
+                    If("indent", >, "$.indent"),
+                    Set("$.index", Copy("index")),
+                )
+            - dedent:
+                And(
+                    Set("indent", Value(0)),
+                    Loop(And(
+                        Symbol('\t'),
+                        Set("indent", Add(1))
+                    )),
+                    If("indent", <, "$.indent"),
+                    Set("$.index", Copy("index")),
+                )
+            - precedence:
+                And(
+                    Set("precedence", Value(precedence * 2)),
+                    If("precedence", >, "$.precedence"),
+                    Push(And(
+                        Set("$.precedence", Value(Bind::Left => precedence * 2, Bind::Right => precedence * 2 - 1)),
+                        node
+                    )),
+                )
+            */
             Node::Precede(precedence, bind, node) => {
                 let precedence = *precedence;
                 let bind = bind.clone();
