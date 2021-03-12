@@ -110,9 +110,9 @@ pub fn node() -> Node {
 }
 
 pub fn parse(text: &str) -> Option<Syntax> {
-    parse::parse(text, "expression", node()).and_then(|tree| convert(&tree))
+    parse::parse(text, and(&"expression", node())).and_then(|tree| convert(&tree))
 }
 
 pub fn generate() -> Option<String> {
-    generate::generate(node(), "expression")
+    generate::generate(and(&"expression", node()))
 }

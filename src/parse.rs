@@ -1,7 +1,10 @@
 use crate::node::*;
+use std::collections::HashMap;
 use std::mem;
 use std::ops::{Range, RangeInclusive};
 use std::rc::Rc;
+use Identifier::*;
+use Node::*;
 
 #[derive(Debug, Clone, Default)]
 pub struct Tree<'a> {
@@ -21,13 +24,19 @@ pub struct State<'a> {
 
 impl ToNode for char {
     fn node(self) -> Node {
-        Node::Symbol(self)
+        text(self)
     }
 }
 
 impl ToNode for &str {
     fn node(self) -> Node {
-        all(self.chars().map(symbol).collect())
+        text(self)
+    }
+}
+
+impl ToNode for String {
+    fn node(self) -> Node {
+        text(self)
     }
 }
 
@@ -69,13 +78,13 @@ type Parse<'a> = dyn Fn(&mut State<'a>, &Context<Parser<'a>>) -> bool + 'a;
 */
 
 fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
-    fn next<'a>(node: &Node, context: &mut Context<Parser<'a>>) -> Parser<'a> {
+    fn next<'a>(node: &Node, parsers: &HashMap<usize, Parser<'a>>) -> Parser<'a> {
         match node {
-            Node::True => Parser(Rc::new(|_, _| true)),
-            Node::False => Parser(Rc::new(|_, _| false)),
-            Node::And(_, _) => {
+            True => Parser(Rc::new(|_, _| true)),
+            False => Parser(Rc::new(|_, _| false)),
+            And(_, _) => {
                 let nodes = node.flatten();
-                let parsers: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
+                let parsers: Vec<_> = nodes.iter().map(|node| next(node, parsers)).collect();
                 Parser(Rc::new(move |state, context| {
                     for parser in &parsers {
                         if parser.0(state, context) {
@@ -86,9 +95,9 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     true
                 }))
             }
-            Node::Or(_, _) => {
+            Or(_, _) => {
                 let nodes = node.flatten();
-                let parsers: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
+                let parsers: Vec<_> = nodes.iter().map(|node| next(node, parsers)).collect();
                 Parser(Rc::new(move |state, context| {
                     for parser in &parsers {
                         let mut local = state.clone();
@@ -100,103 +109,88 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     false
                 }))
             }
-            Node::Define(identifier, node) => {
-                let parser = next(node, context);
-                context.refer(identifier, parser);
-                next(&Node::True, context)
-            }
-            Node::Refer(Identifier::Unique(identifier)) => {
-                let identifier = *identifier;
-                Parser(Rc::new(move |state, context| {
-                    match context.references.get(&identifier) {
-                        Some(parser) => parser.0(state, context),
-                        None => false,
-                    }
-                }))
-            }
-            Node::Refer(Identifier::Path(path)) => {
-                let identifier = context.identify(&Identifier::Path(path.clone()));
-                let path = path.clone();
-                Parser(Rc::new(move |state, context| {
-                    match context.references.get(&identifier) {
-                        Some(parser) => {
-                            let path = mem::replace(&mut state.path, path.clone());
-                            let result = parser.0(state, context);
-                            state.path = path;
-                            result
-                        }
-                        None => false,
-                    }
-                }))
-            }
-            Node::Spawn(node) => {
-                let parser = next(node, context);
-                Parser(Rc::new(move |state, context| {
-                    let index = state.index;
-                    let parents = mem::replace(&mut state.trees, Vec::new());
-                    if parser.0(state, context) {
-                        let children = mem::replace(&mut state.trees, parents);
-                        state.trees.push(Tree {
-                            kind: state.path.clone(),
-                            value: &state.text[index..state.index],
-                            children,
-                        });
-                        true
-                    } else {
-                        false
-                    }
-                }))
-            }
-            Node::Symbol(symbol) => {
-                let symbol = *symbol;
-                let size = symbol.len_utf8();
+            Refer(Unique(identifier)) => match parsers.get(&identifier) {
+                Some(parser) => parser.clone(),
+                None => {
+                    let identifier = *identifier;
+                    Parser(Rc::new(move |state, context| {
+                        context.references[&identifier].0(state, context)
+                    }))
+                }
+            },
+            // Refer(Path(path)) => {
+            //     let identifier = context.identify(&Path(path.clone()));
+            //     let path = path.clone();
+            //     Parser(Rc::new(move |state, context| {
+            //         match context.references.get(&identifier) {
+            //             Some(parser) => {
+            //                 let path = mem::replace(&mut state.path, path.clone());
+            //                 let result = parser.0(state, context);
+            //                 state.path = path;
+            //                 result
+            //             }
+            //             None => false,
+            //         }
+            //     }))
+            // }
+            // Spawn(node) => {
+            //     let parser = next(node, parsers);
+            //     Parser(Rc::new(move |state, context| {
+            //         let index = state.index;
+            //         let parents = mem::replace(&mut state.trees, Vec::new());
+            //         if parser.0(state, context) {
+            //             let children = mem::replace(&mut state.trees, parents);
+            //             state.trees.push(Tree {
+            //                 kind: state.path.clone(),
+            //                 value: &state.text[index..state.index],
+            //                 children,
+            //             });
+            //             true
+            //         } else {
+            //             false
+            //         }
+            //     }))
+            // }
+            Syntax(kind) => {
+                let kind = kind.clone();
                 Parser(Rc::new(move |state, _| {
-                    let text = state.text;
-                    if state.index < text.len() && text[state.index..].starts_with(symbol) {
-                        state.index += size;
-                        true
-                    } else {
-                        false
+                    let children = mem::replace(&mut state.trees, Vec::new());
+                    state.trees.push(Tree {
+                        kind: kind.clone(),
+                        value: "",
+                        children,
+                    });
+                    true
+                }))
+            }
+            Symbol(symbol) => {
+                let symbol = *symbol;
+                Parser(Rc::new(move |state, _| {
+                    match state.text.get(state.index..) {
+                        Some(slice) if slice.starts_with(symbol) => {
+                            state.index += symbol.len_utf8();
+                            true
+                        }
+                        _ => false,
                     }
                 }))
             }
-            /*
-            - if-else:
-                Or(And(If("left", compare, "right"), if), else)
-            - indent:
-                And(
-                    Set("indent", Value(0)),
-                    Loop(And(
-                        Push(Symbol('\t')),
-                        Set("indent", Add(1))
-                    )),
-                    If("indent", >, "$.indent"),
-                    Set("$.index", Copy("index")),
-                )
-            - dedent:
-                And(
-                    Set("indent", Value(0)),
-                    Loop(And(
-                        Symbol('\t'),
-                        Set("indent", Add(1))
-                    )),
-                    If("indent", <, "$.indent"),
-                    Set("$.index", Copy("index")),
-                )
-            - precedence:
-                And(
-                    Set("precedence", Value(precedence * 2)),
-                    If("precedence", >, "$.precedence"),
-                    Push(And(
-                        Set("$.precedence", Value(Bind::Left => precedence * 2, Bind::Right => precedence * 2 - 1)),
-                        node
-                    )),
-                )
-            */
-            Node::Precede(precedence, bind, node) => {
+            Text(text) => {
+                let text = text.clone();
+                Parser(Rc::new(move |state, _| {
+                    match state.text.get(state.index..) {
+                        Some(slice) if slice.starts_with(text.as_str()) => {
+                            state.index += text.len();
+                            true
+                        }
+                        _ => false,
+                    }
+                }))
+            }
+            Precede(precedence, bind, node) => {
                 let precedence = *precedence;
                 let bind = bind.clone();
-                let parser = next(node, context);
+                let parser = next(node, parsers);
                 Parser(Rc::new(move |state, context| match bind {
                     Bind::Left if precedence <= state.precedence => false,
                     Bind::Right if precedence < state.precedence => false,
@@ -208,21 +202,48 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     }
                 }))
             }
+            Switch(cases) => {
+                let mut map = HashMap::new();
+                for case in cases {
+                    map.insert(case.0, next(&case.1, parsers));
+                }
+
+                Parser(Rc::new(move |state, context| {
+                    match state
+                        .text
+                        .get(state.index..)
+                        .and_then(|text| text.chars().next())
+                        .map(|key| (key, map.get(&key)))
+                    {
+                        Some((key, Some(parser))) => {
+                            state.index += key.len_utf8();
+                            parser.0(state, context)
+                        }
+                        _ => false,
+                    }
+                }))
+            }
+            _ => panic!("Invalid node '{}'.", node),
         }
     }
 
     let mut context = Context::new();
+    let mut parsers = HashMap::new();
     let node = context.resolve(node);
-    (next(&node, &mut context), context)
+    for (identifier, node) in &context.definitions {
+        let parser = next(node, &parsers);
+        parsers.insert(*identifier, parser);
+    }
+    context.references = parsers;
+    (next(&node, &context.references), context)
 }
 
-pub fn parse<'a>(text: &'a str, path: &'a str, node: Node) -> Option<Tree<'a>> {
-    let (_, context) = parsers(node);
-    let parser = context.reference(&Identifier::Path(path.into()))?;
+pub fn parse<'a>(text: &'a str, node: Node) -> Option<Tree<'a>> {
+    let (parser, context) = parsers(node);
     let mut state = State {
         index: 0,
         text,
-        path: path.into(),
+        path: "".into(),
         trees: Vec::new(),
         precedence: 0,
     };
@@ -234,25 +255,21 @@ pub fn parse<'a>(text: &'a str, path: &'a str, node: Node) -> Option<Tree<'a>> {
     }
 }
 
-pub fn prefix<N: ToNode>(precedence: usize, node: N) -> Node {
-    Node::Precede(precedence, Bind::None, node.node().into())
+pub fn prefix(precedence: usize, node: impl ToNode) -> Node {
+    Precede(precedence, Bind::None, node.node().into())
 }
 
-pub fn postfix<N: ToNode>(precedence: usize, bind: Bind, node: N) -> Node {
-    Node::Precede(precedence, bind, node.node().into())
+pub fn postfix(precedence: usize, bind: Bind, node: impl ToNode) -> Node {
+    Precede(precedence, bind, node.node().into())
 }
 
-pub fn precede<L: ToNode, R: ToNode>(prefix: L, postfix: R) -> Node {
+pub fn precede(prefix: impl ToNode, postfix: impl ToNode) -> Node {
     and(prefix, repeat(.., postfix))
-}
-
-pub fn symbol(symbol: char) -> Node {
-    Node::Symbol(symbol)
 }
 
 pub fn range(low: char, high: char) -> Node {
     any((low as u8..=high as u8)
         .into_iter()
-        .map(|index| symbol(index as char))
+        .map(|index| text(index as char))
         .collect())
 }

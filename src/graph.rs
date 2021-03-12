@@ -2,20 +2,20 @@ use std::mem;
 
 /*
 language Json {
-    grammar {
+    parse {
         . = Value;
         ~ = (' ' | '\t' | '\n' | '\r'){..};
         let integer = ~ & '-' & (0 | (1..9 & 0..9{..}));
         let fraction = '.' & 0..9{1..};
         let exponent = ('e'|'E') & ('+' | '-')? & integer;
 
-        syntax Value.Null = "null";
-        syntax Value.True = "true";
-        syntax Value.False = "false";
-        syntax Value.Number = (integer & fraction? & exponent?)!;
-        syntax Value.String = ~'"' & ('\u0'..'\u128')! & '"'~;
-        syntax Value.Array = "[" & Value{..;","} & "]";
-        syntax Value.Object = "{" & (String & ":" & Value){..;","} & "}";
+        Value.Null = "null";
+        Value.True = "true";
+        Value.False = "false";
+        Value.Number = (integer & fraction? & exponent?)!;
+        Value.String = ~'"' & ('\u0'..'\u128')! & '"'~;
+        Value.Array = "[" & Value{..;","} & "]";
+        Value.Object = "{" & (String & ":" & Value){..;","} & "}";
     }
 
     convert {
@@ -28,72 +28,159 @@ language Json {
             Object(Vec<(Node, Node)>),
         }
 
-        syntax Value.Null => Node::Null;
-        syntax Value.True => Node::Boolean(true);
-        syntax Value.False => Node::Boolean(false);
-        syntax Value.Number(text: String) => Node::Number(text.parse().unwrap());
-        syntax Value.String(text: String) => Node::String(text);
-        syntax Value.Array(nodes: Vec<Node>) => Node::Array(nodes);
-        syntax Value.Object(keys: Vec<Node>, values: Vec<Node>) => Node::Object(keys.iter().zip(values).collect());
+        Value.Null => Node::Null;
+        Value.True => Node::Boolean(true);
+        Value.False => Node::Boolean(false);
+        Value.Number(text: String) => Node::Number(text.parse().unwrap());
+        Value.String(text: String) => Node::String(text);
+        Value.Array(nodes: Vec<Node>) => Node::Array(nodes);
+        Value.Object(keys: Vec<Node>, values: Vec<Node>) => Node::Object(keys.iter().zip(values).collect());
     }
 }
 
 language CSharp {
-    grammar {
-        ~ = (' ' | '\t' | '\n' | '\r'){..};
+    parse {
+        . = (Directive | Declaration){..};
+        ~ = (space | line | Comment){..};
 
-        syntax Expression.Json = "json" & "{" & Json & "}";
+        let space = ' ' | '\t' | '\0';
+        let line = '\n' | '\r' | '\0';
+        let integer = '0' | '1'..='9' & '0'..='9'{..};
+        let fraction = '.' & '0'..='9'{1..};
+        let preUnary(operator) = operator & Expression;
+        let postUnary(operator) = Expression & operator;
+        let binary(operator) = Expression & operator & Expression;
+        let accessor(name) = name & (("=>" & Expression) | Statement.Block);
+        let kind = "class" | "interface" | "struct";
+
+        Comment.Line = block('//', true!, line);
+        Comment.Block = block('/' & '*', true, '*' * '/');
+
+        Name.Global = "global";
+        Name.Name = ~ & (('a'..='z' | 'A'..='Z') & ('a'..='z' | 'A'..='Z' | '0'..='9'){..})! & ~;
+        Name.Qualified = Name.Name & "." & Name;
+
+        Directive.Using = "using" & Name & ";";
+        Directive.Extern = "extern" & "alias" & Name & ";";
+
+        Accessor.Get = accessor("get");
+        Accessor.Set = accessor("set");
+        Accessor.Add = accessor("add");
+        Accessor.Remove = accessor("remove");
+
+        Literal.Null = "null";
+        Literal.True = "true";
+        Literal.False = "false";
+        Literal.Integer = integer! & ('u' | 'l' | 'ul')!;
+        Literal.Rational = integer!? & '.' & integer! & ('f' | 'd' | 'm')!;
+        Literal.String = block(~ & '"', '\"'?!, '"' & ~);
+        Literal.Symbol = block(~ & '\'', '\"'?!, '\'' & ~);
+
+        Declaration.Namespace = "namespace" & block("{", (Directive | Declaration){..}, "}");
+        Declaration.Type = kind! & block("{", Declaration{..}, "}");
+
+        Statement.Empty = ";";
+        Statement.Block = "{" & Statement{..} & "}";
+        Statement.If = "if" & "(" & Expression & ")" & Statement & ("else" & Statement)?;
+        Statement.Return = "return" & Expression & ";";
+        Statement.Expression = Expression & ";";
+        Statement.Continue = "continue" & ";";
+        Statement.Break = "break" & ";";
+        Statement.Yield = "yield" & (Statement.Return | Statement.Break) & ";";
+
+        Expression.Literal = Literal;
+        Expression.Group = "(" & Expression & ")";
+        Expression.Name = Name;
+
+        Expression.LogicNot = preUnary("!");
+        Expression.BitNot = preUnary("~");
+        Expression.PreIncrement = preUnary("++");
+        Expression.PreDecrement = preUnary("--");
+        Expression.PostIncrement = postUnary("++");
+        Expression.PostDecrement = postUnary("--");
+
+        Expression.Invoke = Expression & block("(", Expression{..;","}, ")");
+        Expression.Index = Expression & block("[", Expression{..;","}, "]");
+        Expression.Access = Expression & "." & Identifier.Name;
+        Expression.Dereference = Expression & "->" & Identifier.Name;
+
+        Expression.LogicAnd = binary("&&");
+        Expression.LogicOr = binary("||");
+        Expression.BitAnd = binary("&");
+        Expression.BitOr = binary("|");
+        Expression.BitXor = binary("^");
+        Expression.Add = binary("+");
+        Expression.Subtract = binary("-");
+        Expression.Multiply = binary("*");
+        Expression.Divide = binary("/");
+        Expression.ShiftLeft = binary("<<");
+        Expression.ShiftRight = binary(">>");
+        Expression.Equal = binary("==");
+        Expression.NotEqual = binary("!=");
+        Expression.Greater = binary(">");
+        Expression.GreaterEqual = binary(">=");
+        Expression.Lesser = binary("<");
+        Expression.LesserEqual = binary("<=");
+        Expression.Is = binary("is");
+        Expression.As = binary("as");
+        Expression.Assign { bind: right } = binary("=");
+        Expression.AddAssign { bind: right } = binary("+=");
+        Expression.SubtractAssign { bind: right } = binary("-=");
+        Expression.MultiplyAssign { bind: right } = binary("*=");
+        Expression.DivideAssign { bind: right } = binary("/=");
+        Expression.If { bind: right } = Expression & "?" & Expression & ":" & Expression;
+
+        Expression.Json = "json" & "{" & Json & "}";
     }
 
     convert {
-        syntax Expression.Json(json: Json::Node) => {
-            match json {
-                Json::Node::Null => Node::Literal::Null,
-                Json::Node::Boolean(value) => Node::Literal::Boolean(value),
-                Json::Node::Number(value) =>
-            }
-        }
+        Expression.Json(Json::Node::Null) => Literal::Null;
+        Expression.Json(Json::Node::Boolean(value: bool)) => Literal::Boolean(value);
+        Expression.Json(Json::Node::Number(value: f64)) => Literal::Rational(value);
     }
 }
 
 language Quint {
-    grammar {
-        . = "language" & Identifier & "{" & Define{..} & "}";
+    parse {
+        . = "language" & Identifier & "{" & Define{..} & "}" |> check |> interpret;
         ~ = (' ' | '\t' | '\n' | '\r'){..};
 
         let letter = 'a'..'z' | 'A'..'Z';
         let digit = '0'..='9';
         let integer = '0' | ('1'..='9' & digit*);
 
-        syntax Define.Grammar = "grammar" & "{" & Quint.Grammar & "}";
-        syntax Define.Convert = "convert" & "{" & Quint.Convert & "}";
-        syntax Identifier.Name = (letter & (letter | digit){..})!;
-        syntax Identifier.Path = Identifier{..;"."};
+        Define.Grammar = "parse" & "{" & Quint.Grammar & "}";
+        Define.Convert = "convert" & "{" & Quint.Convert & "}";
+        Define.Check = "check" & "{" & Quint.Check & "}";
+        Define.Interpret = "interpret" & "{" & Quint.Interpret & "}";
+        Define.Generate = "generate" & Identifier & "{" & Quint.Generate & "}";
+
+        Identifier.Name = (letter & (letter | digit){..})!;
+        Identifier.Path = Identifier{..;"."};
     }
 }
 
 language Quint.Grammar {
-    grammar {
+    parse {
         Quint.Grammar = Define{..};
 
-        syntax Identifier.Root = ".";
-        syntax Identifier.Trivia = "~";
+        Identifier.Root = ".";
+        Identifier.Trivia = "~";
 
-        syntax Define.Syntax = "syntax" & Identifier & "=" & Node & ";";
-        syntax Define.Let = "let" & Identifier.Name & "=" & Node & ";";
-        syntax Define.Root = Identifier & "=" & Node & ";";
-        syntax Define.Trivia = "~" & "=" & Node & ";";
+        Define.Syntax = Identifier & "=" & Node & ";";
+        Define.Let = "let" & Identifier.Name & "=" & Node & ";";
+        Define.Trivia = "~" & "=" & Node & ";";
 
-        syntax Node.Word = ~ & '"' & ('\u0'..'\u128'){..}! & '"' & ~;
-        syntax Node.Symbol = ~ & '\'' & ('\u0'..'\u128'){..}! & '\'' & ~;
-        syntax Node.Group = "(" & Node & ")";
-        syntax Node.Range = Node.Symbol & ".." & Node.Symbol;
-        syntax Node.Refer = Identifier;
-        syntax Node.And { priority = 100 } = Node & "&" & Node;
-        syntax Node.Or { priority = 100 } = Node & "|" & Node;
-        syntax Node.Repeat { priority = 200 } = Node & "{" integer!? & ".." & integer!? & (";" & Node)? "}";
-        syntax Node.Store { priority = 300 } = Node & "!";
-        syntax Node.Option { priority = 300 } = Node & "?";
+        Node.Word = ~ & '"' & ('\u0'..'\u128'){..}! & '"' & ~;
+        Node.Symbol = ~ & '\'' & ('\u0'..'\u128'){..}! & '\'' & ~;
+        Node.Group = "(" & Node & ")";
+        Node.Range = Node.Symbol & ".." & Node.Symbol;
+        Node.Refer = Identifier;
+        Node.And { priority = 100 } = Node & "&" & Node;
+        Node.Or { priority = 100 } = Node & "|" & Node;
+        Node.Repeat { priority = 200 } = Node & "{" integer!? & ".." & integer!? & (";" & Node)? "}";
+        Node.Store { priority = 300 } = Node & "!";
+        Node.Option { priority = 300 } = Node & "?";
     }
 
     convert {
@@ -110,33 +197,32 @@ language Quint.Grammar {
             Text(String),
         }
 
-        syntax Identifier.Root => Path(".");
-        syntax Identifier.Trivia => Path("~");
-        syntax Identifier.Name(name: String) => Path(vec![name]);
-        syntax Identifier.Path(names: Vec<String>) = Path(names);
+        Identifier.Root => Path(".");
+        Identifier.Trivia => Path("~");
+        Identifier.Name(name: String) => Path(vec![name]);
+        Identifier.Path(names: Vec<String>) = Path(names);
 
-        syntax Define.Syntax(path: Path, node: Node) => Node::Define(path, Spawn(node));
-        syntax Define.Let(path: Path, node: Node) => Node::Define(path, node);
-        syntax Define.Root(path: Path, node: Node) => Node::Define(path, node);
-        syntax Define.Trivia(node: Node) => Node::Define("~", node);
+        Define.Syntax(path: Path, node: Node) => Node::Define(path, Spawn(node));
+        Define.Let(path: Path, node: Node) => Node::Define(path, node);
+        Define.Trivia(node: Node) => Node::Define("~", node);
 
-        syntax Node.Word(text: String) => all!(~, Node::Text(word), ~);
-        syntax Node.Symbol(text: String) => Node::Text(text);
-        syntax Node.Group(node: Node) => node;
-        syntax Node.Range(Node::Text(low: String), Node::Text(high: String)) => {
+        Node.Word(text: String) => all!(~, Node::Text(word), ~);
+        Node.Symbol(text: String) => Node::Text(text);
+        Node.Group(node: Node) => node;
+        Node.Range(Node::Text(low: String), Node::Text(high: String)) => {
             match (low.chars().first(), high.chars().first()) {
                 (Some(low), Some(high)) => any!(low..=high);
                 _ => Node::False
             }
         }
-        syntax Node.Refer(path: Path) => Node::Refer(path);
-        syntax Node.And(left: Node, right: Node) => Node::And(left, right);
-        syntax Node.Or(left: Node, right: Node) => Node::Or(left, right);
-        syntax Node.Repeat(node: Node, low: Option<usize>, high: Option<usize>, separator: Option<Node>) => {
+        Node.Refer(path: Path) => Node::Refer(path);
+        Node.And(left: Node, right: Node) => Node::And(left, right);
+        Node.Or(left: Node, right: Node) => Node::Or(left, right);
+        Node.Repeat(node: Node, low: Option<usize>, high: Option<usize>, separator: Option<Node>) => {
             // TODO
         }
-        syntax Node.Store(node: Node) => Node::Store(node);
-        syntax Node.Option(node: Node) => Node::Or(node, Node::True);
+        Node.Store(node: Node) => Node::Store(node);
+        Node.Option(node: Node) => Node::Or(node, Node::True);
     }
 }
 

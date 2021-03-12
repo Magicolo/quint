@@ -4,6 +4,7 @@ use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use std::mem;
 use std::rc::Rc;
+use Node::*;
 
 pub struct State {
     pub text: String,
@@ -18,9 +19,9 @@ pub type Generate = dyn Fn(&mut State, &Context<Generator>) -> bool;
 pub fn generator(node: Node) -> (Generator, Context<Generator>) {
     fn next(node: &Node, context: &mut Context<Generator>) -> Generator {
         match node {
-            Node::True => Generator(Rc::new(|_, _| true)),
-            Node::False => Generator(Rc::new(|_, _| false)),
-            Node::And(_, _) => {
+            True => Generator(Rc::new(|_, _| true)),
+            False => Generator(Rc::new(|_, _| false)),
+            And(_, _) => {
                 let nodes = node.flatten();
                 let generators: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
                 Generator(Rc::new(move |state, context| {
@@ -33,7 +34,7 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                     true
                 }))
             }
-            Node::Or(_, _) => {
+            Or(_, _) => {
                 let nodes = node.flatten();
                 let generators: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
                 Generator(Rc::new(move |state, context| {
@@ -46,12 +47,12 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                     false
                 }))
             }
-            Node::Define(identifier, node) => {
+            Define(identifier, node) => {
                 let generator = next(node, context);
                 context.refer(identifier, generator);
-                next(&Node::True, context)
+                next(&True, context)
             }
-            Node::Refer(identifier) => {
+            Refer(identifier) => {
                 let identifier = context.identify(identifier);
                 Generator(Rc::new(move |state, context| {
                     match context.references.get(&identifier) {
@@ -60,15 +61,23 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                     }
                 }))
             }
-            Node::Spawn(node) => next(node, context),
-            Node::Symbol(symbol) => {
+            Spawn(node) => next(node, context),
+            Syntax(_) => next(&True, context),
+            Symbol(symbol) => {
                 let symbol = *symbol;
                 Generator(Rc::new(move |state, _| {
                     state.text.push(symbol);
                     true
                 }))
             }
-            Node::Precede(precedence, bind, node) => {
+            Text(text) => {
+                let text = text.clone();
+                Generator(Rc::new(move |state, _| {
+                    state.text.push_str(text.as_str());
+                    true
+                }))
+            }
+            Precede(precedence, bind, node) => {
                 let precedence = *precedence;
                 let bind = bind.clone();
                 let generator = next(node, context);
@@ -83,6 +92,13 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                     }
                 }))
             }
+            Switch(cases) => {
+                let mut nodes = Vec::new();
+                for case in cases {
+                    nodes.push(and(case.0, case.1.clone()));
+                }
+                next(&any(nodes), context)
+            }
         }
     }
 
@@ -91,9 +107,8 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
     (next(&node, &mut context), context)
 }
 
-pub fn generate(node: Node, path: &str) -> Option<String> {
-    let (_, context) = generator(node);
-    let generator = context.reference(&Identifier::Path(path.into()))?;
+pub fn generate(node: Node) -> Option<String> {
+    let (generator, context) = generator(node);
     let mut state = State {
         text: String::new(),
         random: rand::thread_rng(),

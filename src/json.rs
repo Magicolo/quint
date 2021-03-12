@@ -53,6 +53,8 @@ pub fn node() -> Node {
     let exponent = || all!(any!('e', 'E'), option(any!('+', '-')), repeat(1.., digit()));
     let number = || all!(integer(), option(fraction()), option(exponent()));
     all!(
+        define(".", &"Value"),
+        define("~", repeat(.., any!(' ', '\n', '\r', '\t'))),
         define(
             "value",
             any!(&"null", &"true", &"false", &"string", &"array", &"object", &"number")
@@ -74,9 +76,9 @@ pub fn node() -> Node {
 }
 
 pub fn parse(text: &str) -> Option<Syntax> {
-    parse::parse(text, "value", node()).and_then(|tree| convert(&tree))
+    parse::parse(text, and(&"value", node())).and_then(|tree| convert(&tree))
 }
 
 pub fn generate() -> Option<String> {
-    generate::generate(node(), "value")
+    generate::generate(and(&"value", node()))
 }

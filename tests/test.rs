@@ -4,10 +4,7 @@ use quint::parse::*;
 use quint::*;
 
 fn test(text: &str, node: Node, success: bool) {
-    assert_eq!(
-        success,
-        parse(text, "root", define("root", spawn(node))).is_some()
-    );
+    assert_eq!(success, parse(text, spawn(node)).is_some());
 }
 
 #[test]
@@ -83,7 +80,7 @@ fn repeat_range_boba() {
 
 #[test]
 fn join_boba() {
-    let node = join(option(symbol(' ')), "Boba");
+    let node = join(option(text(' ')), "Boba");
     test("Boba Boba", node.clone(), true);
     test("BobaBoba", node.clone(), true);
     test("Boba Boba Boba", node.clone(), true);
@@ -92,7 +89,7 @@ fn join_boba() {
 
 #[test]
 fn spawn_boba() {
-    let tree = parse("Fett", "Boba", define("Boba", spawn("Fett"))).unwrap();
+    let tree = parse("Fett", and(&"Boba", define("Boba", spawn("Fett")))).unwrap();
     assert_eq!("Boba", tree.kind);
     assert_eq!("Fett", tree.value);
 }
@@ -102,7 +99,7 @@ fn refer_boba_fett() {
     let node = all(vec![
         define("Boba", "Boba"),
         refer("Boba"),
-        symbol(' '),
+        text(' '),
         refer("Fett"),
         define("Fett", "Fett"),
     ]);
