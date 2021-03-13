@@ -52,6 +52,8 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                 context.refer(identifier, generator);
                 next(&True, context)
             }
+            Depth(_, node) => next(node, context),
+            Store(_, node) => next(node, context),
             Refer(identifier) => {
                 let identifier = context.identify(identifier);
                 Generator(Rc::new(move |state, context| {
@@ -61,8 +63,7 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                     }
                 }))
             }
-            Spawn(node) => next(node, context),
-            Syntax(_) => next(&True, context),
+            Spawn(_) => next(&True, context),
             Symbol(symbol) => {
                 let symbol = *symbol;
                 Generator(Rc::new(move |state, _| {

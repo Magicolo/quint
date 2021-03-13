@@ -92,20 +92,17 @@ pub fn node() -> Node {
             "group",
             prefix(100, all!(wrap('('), &"expression", wrap(')')))
         ),
-        define(
-            "number",
-            spawn(prefix(100, wrap(all!(repeat(1.., digit())))))
-        ),
-        define("absolute", spawn(unary('+'))),
-        define("negate", spawn(unary('-'))),
-        define("pre-increment", spawn(unary("++"))),
-        define("pre-decrement", spawn(unary("--"))),
-        define("post-increment", spawn(postfix(120, Bind::Left, "++"))),
-        define("post-decrement", spawn(postfix(120, Bind::Left, "--"))),
-        define("add", spawn(binary('+', 10, Bind::Left))),
-        define("subtract", spawn(binary('-', 10, Bind::Left))),
-        define("multiply", spawn(binary('*', 20, Bind::Left))),
-        define("divide", spawn(binary('/', 20, Bind::Left))),
+        syntax("number", prefix(100, wrap(all!(repeat(1.., digit()))))),
+        syntax("absolute", unary('+')),
+        syntax("negate", unary('-')),
+        syntax("pre-increment", unary("++")),
+        syntax("pre-decrement", unary("--")),
+        syntax("post-increment", postfix(120, Bind::Left, "++")),
+        syntax("post-decrement", postfix(120, Bind::Left, "--")),
+        syntax("add", binary('+', 10, Bind::Left)),
+        syntax("subtract", binary('-', 10, Bind::Left)),
+        syntax("multiply", binary('*', 20, Bind::Left)),
+        syntax("divide", binary('/', 20, Bind::Left)),
     )
 }
 

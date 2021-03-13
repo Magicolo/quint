@@ -47,8 +47,9 @@ pub enum Node {
     Precede(usize, Bind, Box<Self>),
 
     Symbol(char),
-    Syntax(String),
-    Spawn(Box<Self>),
+    Spawn(String),
+    Depth(usize, Box<Self>),
+    Store(usize, Box<Self>),
     Switch(Vec<(char, Node)>),
     Text(String),
     /*
@@ -141,7 +142,7 @@ impl<T: Clone> Context<T> {
 
     pub fn resolve(&mut self, node: Node) -> Node {
         // TODO: Apply precedence properly.
-        // TODO: Find a way to optimize through 'Spawn/Store/Precedence' nodes.
+        // TODO: Find a way to optimize through 'Store/Precedence' nodes.
         // TODO: Find a way to reproduce 'push/pop' behavior of 'state.path' that 'Refer' nodes do.
 
         fn identify<T: Clone>(node: Node, context: &mut Context<T>) -> Node {
@@ -165,6 +166,29 @@ impl<T: Clone> Context<T> {
                 node => (node, precedence),
             };
             node.map(|node| precede(node, precedence))
+        }
+
+        /// (a & b) | (a & c) => a & (b | c)
+        fn factor(node: Node) -> Node {
+            match node {
+                And(left, right) => match (*left, *right) {
+                    (And(left, middle), right) => {
+                        factor(And(left, factor(And(middle, right.into())).into()))
+                    }
+                    (left, right) => and(left, right),
+                },
+                Or(left, right) => match (*left, *right) {
+                    (Or(left, middle), right) => {
+                        factor(Or(left, factor(Or(middle, right.into())).into()))
+                    }
+                    (And(left1, right1), And(mut left2, right2)) if left1 == left2 => {
+                        *left2 = factor(Or(right1, right2));
+                        factor(And(left1, left2))
+                    }
+                    (left, right) => or(left, right),
+                },
+                node => node,
+            }
         }
 
         /// 'a' => { 'a': True }, "ab" => { 'a': True } & { 'b': True }
@@ -276,12 +300,44 @@ impl<T: Clone> Context<T> {
             }
         }
 
+        fn dig(node: Node, depth: usize) -> Node {
+            match node {
+                Depth(inner, node) => dig(*node, inner + depth),
+                Spawn(kind) if depth > 0 => Depth(depth, Spawn(kind).into()),
+                Refer(identifier) if depth > 0 => Depth(depth, Refer(identifier).into()),
+                node => node.map(|node| dig(node, depth)),
+            }
+        }
+
+        fn store(node: Node, offset: usize) -> Node {
+            println!("STORE: {} -> {}", offset, node);
+            match node {
+                And(left, right) => match store(*left, offset) {
+                    Symbol(symbol) => {
+                        and(Symbol(symbol), store(*right, offset + symbol.len_utf8()))
+                    }
+                    Text(text) => {
+                        let offset = offset + text.len();
+                        and(Text(text), store(*right, offset))
+                    }
+                    left => And(left.into(), right),
+                },
+                Store(inner, node) => store(*node, if offset > inner { offset } else { inner }),
+                Spawn(kind) if offset > 0 => Store(offset, Spawn(kind).into()),
+                Refer(identifier) if offset > 0 => Store(offset, Refer(identifier).into()),
+                node => node.map(|node| store(node, offset)),
+            }
+        }
+
         fn optimize<T: Clone>(
             node: Node,
             context: &mut Context<T>,
             set: &mut HashSet<usize>,
         ) -> Node {
-            node.descend(|node| expand(node, context, set))
+            let node = node
+                .descend(|node| expand(node, context, set))
+                .descend(factor);
+            store(dig(node, 0), 0)
                 .descend(pre)
                 .descend(process)
                 .descend(post)
@@ -293,6 +349,9 @@ impl<T: Clone> Context<T> {
         let node = optimize(node, self, &mut HashSet::new());
         println!("Optimize");
         println!("{}", node);
+        for pair in self.definitions.iter() {
+            println!("{}: {}", pair.0, pair.1);
+        }
         node
     }
 
@@ -356,9 +415,13 @@ impl Node {
                 *node = map(*node);
                 Define(identifier, node)
             }
-            Spawn(mut node) => {
+            Depth(depth, mut node) => {
                 *node = map(*node);
-                Spawn(node)
+                Depth(depth, node)
+            }
+            Store(offset, mut node) => {
+                *node = map(*node);
+                Store(offset, node)
             }
             Precede(precedence, bind, mut node) => {
                 *node = map(*node);
@@ -439,12 +502,21 @@ impl Display for Node {
                 formatter.write_str(")")
             }
             Refer(identifier) => identifier.fmt(formatter),
-            Spawn(node) => {
-                formatter.write_str("Spawn(")?;
+            Depth(depth, node) => {
+                formatter.write_str("Depth(")?;
+                Display::fmt(depth, formatter)?;
+                formatter.write_str(", ")?;
                 node.fmt(formatter)?;
                 formatter.write_str(")")
             }
-            Syntax(kind) => {
+            Store(offset, node) => {
+                formatter.write_str("Store(")?;
+                Display::fmt(offset, formatter)?;
+                formatter.write_str(", ")?;
+                node.fmt(formatter)?;
+                formatter.write_str(")")
+            }
+            Spawn(kind) => {
                 formatter.write_str("[")?;
                 Display::fmt(kind, formatter)?;
                 formatter.write_str("]")
@@ -501,6 +573,10 @@ impl Display for Node {
 
 pub fn option(node: impl ToNode) -> Node {
     or(node, True)
+}
+
+pub fn store(node: impl ToNode) -> Node {
+    Store(0, node.node().into())
 }
 
 pub fn or(left: impl ToNode, right: impl ToNode) -> Node {
@@ -566,16 +642,15 @@ pub fn define(path: &str, node: impl ToNode) -> Node {
 }
 
 pub fn syntax(path: &str, node: impl ToNode) -> Node {
-    Define(Path(path.into()), and(node, Syntax(path.into())).into())
+    Define(
+        Path(path.into()),
+        Depth(1, and(node, Spawn(path.into())).into()).into(),
+    )
 }
 
 pub fn join(separator: impl ToNode, node: impl ToNode) -> Node {
     let node = node.node();
     option(and(node.clone(), repeat(.., and(separator, node))))
-}
-
-pub fn spawn(node: impl ToNode) -> Node {
-    Spawn(node.node().into())
 }
 
 pub fn text(text: impl Into<String>) -> Node {

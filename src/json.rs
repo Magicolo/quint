@@ -59,19 +59,19 @@ pub fn node() -> Node {
             "value",
             any!(&"null", &"true", &"false", &"string", &"array", &"object", &"number")
         ),
-        define("null", wrap(spawn("null"))),
-        define("true", wrap(spawn("true"))),
-        define("false", wrap(spawn("false"))),
-        define("string", wrap(all!('"', spawn(repeat(.., letter())), '"'))),
-        define(
+        syntax("null", wrap("null")),
+        syntax("true", wrap("true")),
+        syntax("false", wrap("false")),
+        syntax("string", wrap(all!('"', repeat(.., letter()), '"'))),
+        syntax(
             "array",
-            all!(wrap('['), spawn(join(wrap(','), &"value")), wrap(']'))
+            all!(wrap('['), join(wrap(','), &"value"), wrap(']'))
         ),
-        define(
+        syntax(
             "object",
-            all!(wrap('{'), spawn(join(wrap(','), pair())), wrap('}'))
+            all!(wrap('{'), join(wrap(','), pair()), wrap('}'))
         ),
-        define("number", wrap(spawn(number()))),
+        syntax("number", wrap(number())),
     )
 }
 

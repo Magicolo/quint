@@ -13,13 +13,15 @@ pub struct Tree<'a> {
     pub children: Vec<Tree<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct State<'a> {
     pub index: usize,
     pub text: &'a str,
     pub path: String, // TODO: try to replace with '&str'
-    pub trees: Vec<Tree<'a>>,
+    pub trees: Vec<(Tree<'a>, usize)>,
     pub precedence: usize,
+    pub depth: usize,
+    pub offset: usize,
 }
 
 impl ToNode for char {
@@ -151,15 +153,46 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
             //         }
             //     }))
             // }
-            Syntax(kind) => {
+            Depth(depth, node) => {
+                let depth = *depth;
+                let parser = next(node, parsers);
+                Parser(Rc::new(move |state, context| {
+                    state.depth += depth;
+                    let result = parser.0(state, context);
+                    state.depth -= depth;
+                    result
+                }))
+            }
+            Store(offset, node) => {
+                let offset = *offset;
+                let parser = next(node, parsers);
+                Parser(Rc::new(move |state, context| {
+                    state.offset += offset;
+                    let result = parser.0(state, context);
+                    state.offset -= offset;
+                    result
+                }))
+            }
+            Spawn(kind) => {
                 let kind = kind.clone();
                 Parser(Rc::new(move |state, _| {
-                    let children = mem::replace(&mut state.trees, Vec::new());
-                    state.trees.push(Tree {
+                    let mut children = Vec::new();
+                    while let Some(pair) = state.trees.pop() {
+                        if pair.1 > state.depth {
+                            children.push(pair.0);
+                        } else {
+                            state.trees.push(pair);
+                            break;
+                        }
+                    }
+                    children.reverse();
+
+                    let tree = Tree {
                         kind: kind.clone(),
-                        value: "",
+                        value: &state.text[state.index - state.offset - 1..state.index],
                         children,
-                    });
+                    };
+                    state.trees.push((tree, state.depth));
                     true
                 }))
             }
@@ -240,16 +273,13 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
 
 pub fn parse<'a>(text: &'a str, node: Node) -> Option<Tree<'a>> {
     let (parser, context) = parsers(node);
-    let mut state = State {
-        index: 0,
-        text,
-        path: "".into(),
-        trees: Vec::new(),
-        precedence: 0,
-    };
+    let mut state = State::default();
+    state.text = text;
 
+    println!("Trees");
+    println!("{:?}", state.trees);
     if parser.0(&mut state, &context) && state.index == state.text.len() {
-        state.trees.pop()
+        state.trees.pop().map(|pair| pair.0)
     } else {
         None
     }
