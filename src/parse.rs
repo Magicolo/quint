@@ -17,11 +17,12 @@ pub struct Tree<'a> {
 pub struct State<'a> {
     pub index: usize,
     pub text: &'a str,
-    pub path: String, // TODO: try to replace with '&str'
-    pub trees: Vec<(Tree<'a>, usize)>,
+    pub trees: Vec<(Tree<'a>, isize)>,
     pub precedence: usize,
-    pub depth: usize,
-    pub offset: usize,
+    pub depth: isize,
+    pub precedences: Vec<usize>,
+    pub indices: Vec<usize>,
+    pub values: Vec<&'a str>,
 }
 
 impl ToNode for char {
@@ -120,59 +121,6 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     }))
                 }
             },
-            // Refer(Path(path)) => {
-            //     let identifier = context.identify(&Path(path.clone()));
-            //     let path = path.clone();
-            //     Parser(Rc::new(move |state, context| {
-            //         match context.references.get(&identifier) {
-            //             Some(parser) => {
-            //                 let path = mem::replace(&mut state.path, path.clone());
-            //                 let result = parser.0(state, context);
-            //                 state.path = path;
-            //                 result
-            //             }
-            //             None => false,
-            //         }
-            //     }))
-            // }
-            // Spawn(node) => {
-            //     let parser = next(node, parsers);
-            //     Parser(Rc::new(move |state, context| {
-            //         let index = state.index;
-            //         let parents = mem::replace(&mut state.trees, Vec::new());
-            //         if parser.0(state, context) {
-            //             let children = mem::replace(&mut state.trees, parents);
-            //             state.trees.push(Tree {
-            //                 kind: state.path.clone(),
-            //                 value: &state.text[index..state.index],
-            //                 children,
-            //             });
-            //             true
-            //         } else {
-            //             false
-            //         }
-            //     }))
-            // }
-            Depth(depth, node) => {
-                let depth = *depth;
-                let parser = next(node, parsers);
-                Parser(Rc::new(move |state, context| {
-                    state.depth += depth;
-                    let result = parser.0(state, context);
-                    state.depth -= depth;
-                    result
-                }))
-            }
-            Store(offset, node) => {
-                let offset = *offset;
-                let parser = next(node, parsers);
-                Parser(Rc::new(move |state, context| {
-                    state.offset += offset;
-                    let result = parser.0(state, context);
-                    state.offset -= offset;
-                    result
-                }))
-            }
             Spawn(kind) => {
                 let kind = kind.clone();
                 Parser(Rc::new(move |state, _| {
@@ -189,7 +137,7 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
 
                     let tree = Tree {
                         kind: kind.clone(),
-                        value: &state.text[state.index - state.offset - 1..state.index],
+                        value: state.values.pop().unwrap_or(""),
                         children,
                     };
                     state.trees.push((tree, state.depth));
@@ -220,19 +168,51 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     }
                 }))
             }
-            Precede(precedence, bind, node) => {
+            Depth(depth) => {
+                let depth = *depth;
+                Parser(Rc::new(move |state, _| {
+                    state.depth += depth;
+                    true
+                }))
+            }
+            Store(shift, Stack::Push) => {
+                let shift = *shift;
+                Parser(Rc::new(move |state, _| {
+                    state.indices.push(state.index - shift);
+                    true
+                }))
+            }
+            Store(shift, Stack::Pop) => {
+                let shift = *shift;
+                Parser(Rc::new(move |state, _| match state.indices.pop() {
+                    Some(index) => {
+                        let value = &state.text[index..state.index - shift];
+                        state.values.push(value);
+                        true
+                    }
+                    None => false,
+                }))
+            }
+            Precede(precedence, bind, Stack::Push) => {
                 let precedence = *precedence;
                 let bind = bind.clone();
-                let parser = next(node, parsers);
-                Parser(Rc::new(move |state, context| match bind {
+                Parser(Rc::new(move |state, _| match bind {
                     Bind::Left if precedence <= state.precedence => false,
                     Bind::Right if precedence < state.precedence => false,
                     _ => {
                         let precedence = mem::replace(&mut state.precedence, precedence);
-                        let result = parser.0(state, context);
-                        state.precedence = precedence;
-                        result
+                        state.precedences.push(precedence);
+                        true
                     }
+                }))
+            }
+            Precede(_, _, Stack::Pop) => {
+                Parser(Rc::new(move |state, _| match state.precedences.pop() {
+                    Some(precedence) => {
+                        state.precedence = precedence;
+                        true
+                    }
+                    None => false,
                 }))
             }
             Switch(cases) => {
@@ -256,7 +236,7 @@ fn parsers<'a>(node: Node) -> (Parser<'a>, Context<Parser<'a>>) {
                     }
                 }))
             }
-            _ => panic!("Invalid node '{}'.", node),
+            node => panic!("Invalid node '{}'.", node),
         }
     }
 
@@ -283,18 +263,6 @@ pub fn parse<'a>(text: &'a str, node: Node) -> Option<Tree<'a>> {
     } else {
         None
     }
-}
-
-pub fn prefix(precedence: usize, node: impl ToNode) -> Node {
-    Precede(precedence, Bind::None, node.node().into())
-}
-
-pub fn postfix(precedence: usize, bind: Bind, node: impl ToNode) -> Node {
-    Precede(precedence, bind, node.node().into())
-}
-
-pub fn precede(prefix: impl ToNode, postfix: impl ToNode) -> Node {
-    and(prefix, repeat(.., postfix))
 }
 
 pub fn range(low: char, high: char) -> Node {

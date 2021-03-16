@@ -52,8 +52,6 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                 context.refer(identifier, generator);
                 next(&True, context)
             }
-            Depth(_, node) => next(node, context),
-            Store(_, node) => next(node, context),
             Refer(identifier) => {
                 let identifier = context.identify(identifier);
                 Generator(Rc::new(move |state, context| {
@@ -64,6 +62,9 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                 }))
             }
             Spawn(_) => next(&True, context),
+            Depth(_) => next(&True, context),
+            Store(_, _) => next(&True, context),
+            Precede(_, _, _) => next(&True, context),
             Symbol(symbol) => {
                 let symbol = *symbol;
                 Generator(Rc::new(move |state, _| {
@@ -78,21 +79,6 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                     true
                 }))
             }
-            Precede(precedence, bind, node) => {
-                let precedence = *precedence;
-                let bind = bind.clone();
-                let generator = next(node, context);
-                Generator(Rc::new(move |state, context| match bind {
-                    Bind::Left if precedence <= state.precedence => false,
-                    Bind::Right if precedence < state.precedence => false,
-                    _ => {
-                        let precedence = mem::replace(&mut state.precedence, precedence);
-                        let result = generator.0(state, context);
-                        state.precedence = precedence;
-                        result
-                    }
-                }))
-            }
             Switch(cases) => {
                 let mut nodes = Vec::new();
                 for case in cases {
@@ -100,6 +86,7 @@ pub fn generator(node: Node) -> (Generator, Context<Generator>) {
                 }
                 next(&any(nodes), context)
             }
+            node => panic!("Invalid node '{}'.", node),
         }
     }
 

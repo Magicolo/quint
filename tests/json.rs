@@ -9,70 +9,15 @@ fn test(json: &str, syntax: Syntax) {
 
 #[test]
 fn aaaa() {
-    // let mut context = Context::<()>::new();
-    // let a = all!(
-    //     &"value",
-    //     define("value", any!(&"boolean", &"identifier", &"null", &"array")),
-    //     syntax("identifier", repeat(2.., any!('t', 'r', 'u', 'e'))),
-    //     syntax("boolean", any!("true", "false")),
-    //     syntax("array", all!('[', join(',', &"value"), ']')),
-    //     syntax("null", "null")
-    // );
-    // let a = all!(
-    //     any!(repeat(1.., &"karl"), &"palss"),
-    //     all!(define("karl", "aaaccc")),
-    //     all!(define("palss", any!("aaabccc", "aadccc")))
-    // );
-    // let a = any!("aPPPbcg", "aPPbdg", "aPPaaabbbg", "aPPebdaaag");
-    // context.resolve(a);
-
-    /*
-    'Store' behavior may be implicitly achievable by consuming the text since the last 'Syntax'
-    - requires a 'consume' index in 'State'
-    - will consume by doing: 'state.text[state.consume..state.index]; state.consume = state.index;'
-
-    "jango boba karl jango fett karl" => [c, b, e, d, a] => { a: { b: c, d: e } }
-
-    {
-        'f': ("ett" & [e] & [a]),
-        'j': ("ango" &
-        {
-            'b': ("oba" & [c] & "karl" & [b] & [a]),
-            'f': ("ett" & [e] & "karl" & [d] & [a])
-        }),
-        'b': ("oba" & [c] & [a])
-    }
-    "boba" => [c, a] => { a: c }
-    "fett" => [e, a] => { a: e }
-    "jangobobakarl" => [c, b, a] => { a: { b: c } }
-    "jangofettkarl" => [e, d, a] => { a: { d: e } }
-
-    &a => { depth: 0 }
-    &b & &d => { depth: 0 }
-    &b { depth: 1 }
-    */
-    // let tree = parse::parse(
-    //     "jangobobakarlbobajangofettkarlfett", // { a: { b: { c }, c, { d: e }, e } }
-    //     all!(
-    //         &"a",
-    //         syntax("a", repeat(1.., any!(&"b", &"c", &"d", &"e"))),
-    //         syntax("b", all!("jango", &"c", "karl")),
-    //         syntax("c", "boba"),
-    //         syntax("d", all!("jango", &"e", "karl")),
-    //         syntax("e", "fett"),
-    //     ),
-    // );
     let tree = parse::parse(
-        // "bobafett", // { a: { b: { c }, c, { d: e }, e } }
-        // "jangobobabobabobakarlbobajangofettkarlfett", // { a: { b: { c }, c, { d: e }, e } }
-        "{[{[[boba]]}]}", // { b: { c: { b: c } } }
+        "fett{[boba]}jangofettfettkarl",
         all!(
-            &"b",
-            // syntax("a", repeat(.., any!(&"b", &"c", &"d", &"e"))),
-            syntax("b", all!("{", &"c", "}")),
-            syntax("c", all!("[", option(any!(store("boba"), &"b", &"c")), "]")),
-            // syntax("d", all!("jango", repeat(1.., &"e"), "karl")),
-            // syntax("e", "fett"),
+            &"a",
+            syntax("a", repeat(.., any!(&"b", &"c", &"d", &"e"))),
+            syntax("b", store(all!("{", &"c", "}"))),
+            syntax("c", all!("[", any!(store("boba"), &"b", &"c"), "]")),
+            syntax("d", all!("jango", repeat(1.., &"e"), "karl")),
+            syntax("e", all!(store("fe"), "tt")),
         ),
     );
     println!("{:?}", tree);
