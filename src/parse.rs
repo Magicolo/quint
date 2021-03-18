@@ -1,32 +1,22 @@
 use crate::node::*;
 use std::collections::HashMap;
+use std::fmt::Debug;
+use std::fmt::Display;
+use std::fmt::Error;
+use std::fmt::Formatter;
 use std::mem;
 use std::rc::Rc;
 use Identifier::*;
 use Node::*;
 
 /*
-    The state can be mutable but must be cloned when facing an 'Or'.
-    In the case where 2 branches of an 'Or' succeeds, we know that there is ambiguity in the grammar and the parse
-    tree should hold an ambiguity node that points to both results.
-
-    TODO: differentiate between direct and indirect references
-        - a direct reference will refer directly to the processor and will not be modifiable
-        - an indirect reference will suffer some performance penalty but will be modifiable at runtime
-
     TODO: try to remove 'String.clone()' especially in the spawn logic
-    TODO: collapse pattern ''B' & 'o' & 'b' & 'a'' to a word parser '"Boba"'
-    - this parser could use a u128 as a mask to check for multiple characters at once
-    TODO: collapse pattern '('A' & A) | ('B' & B) | ('C' & C)' to a map parser { 'A': A, 'B': B, 'C': C }
-    TODO: add a range parser?
-    TODO: add a state node
+    TODO: add state nodes
     TODO: operator precedence parser
-
     TODO: retain ambiguities when both branches of an 'Or' succeeds?
-    TODO: run each branch of an 'Or' in parallel?
 */
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Tree<'a> {
     pub kind: String, // TODO: try to replace with '&str'
     pub values: Vec<&'a str>,
@@ -55,7 +45,7 @@ struct State<'a> {
 type Parse<'a> = Rc<dyn Fn(&mut State<'a>) -> bool + 'a>;
 
 impl<'a> Parser<'a> {
-    pub fn parse(&self, text: &'a str) -> Option<Tree<'a>> {
+    pub fn parse(&self, text: &'a str) -> Vec<Tree<'a>> {
         let mut state = State {
             index: 0,
             text,
@@ -68,12 +58,10 @@ impl<'a> Parser<'a> {
             depth: 0,
         };
 
-        println!("Trees");
-        println!("{:?}", state.trees);
         if (self.root)(&mut state) && state.index == state.text.len() {
-            state.trees.pop().map(|pair| pair.0)
+            state.trees.drain(..).map(|pair| pair.0).collect()
         } else {
-            None
+            Vec::new()
         }
     }
 }
@@ -242,5 +230,36 @@ impl<'a> From<Node> for Parser<'a> {
         let root = next(&node, &references);
         let references = references.drain(..).map(|parser| parser.unwrap()).collect();
         Parser { root, references }
+    }
+}
+
+impl Debug for Tree<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), Error> {
+        Display::fmt(self, formatter)
+    }
+}
+
+impl Display for Tree<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), Error> {
+        formatter.write_str(&format!("{}", self.kind))?;
+        if self.values.len() > 0 {
+            let values = self
+                .values
+                .iter()
+                .map(|value| format!(r#""{}""#, value))
+                .collect::<Vec<_>>()
+                .join(", ");
+            formatter.write_str(&format!("({})", values))?;
+        }
+        if self.children.len() > 0 {
+            let children = self
+                .children
+                .iter()
+                .map(|child| child.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            formatter.write_str(&format!(": {} {} {}", "{", children, "}"))?;
+        }
+        Ok(())
     }
 }

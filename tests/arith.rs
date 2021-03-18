@@ -2,9 +2,7 @@ extern crate quint;
 use quint::arith::*;
 
 fn test(text: &str, syntax: Syntax) {
-    let result = parse(text);
-    println!("{:?}", result);
-    assert_eq!(syntax, result.unwrap());
+    assert_eq!(syntax, parse(text).unwrap());
 }
 
 #[test]

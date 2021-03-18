@@ -15,19 +15,19 @@ pub enum Syntax {
 
 pub fn convert(tree: &Tree) -> Option<Syntax> {
     Some(match tree.kind.as_str() {
-        "null" => Syntax::Null,
-        "number" => Syntax::Number(tree.values[0].parse().ok()?),
-        "true" => Syntax::Boolean(true),
-        "false" => Syntax::Boolean(false),
-        "string" => Syntax::String(tree.values[0].into()),
-        "array" => {
+        ".null" => Syntax::Null,
+        ".number" => Syntax::Number(tree.values[0].parse().ok()?),
+        ".true" => Syntax::Boolean(true),
+        ".false" => Syntax::Boolean(false),
+        ".string" => Syntax::String(tree.values[0].into()),
+        ".array" => {
             let mut items = Vec::new();
             for child in tree.children.iter() {
                 items.push(convert(child)?);
             }
             Syntax::Array(items)
         }
-        "object" => {
+        ".object" => {
             let mut pairs = Vec::new();
             let mut children = tree.children.iter();
             while let (Some(key), Some(value)) = (children.next(), children.next()) {
@@ -41,10 +41,9 @@ pub fn convert(tree: &Tree) -> Option<Syntax> {
 
 pub fn node() -> Node {
     fn wrap<N: ToNode>(node: N) -> Node {
-        let space = repeat(.., any!(' ', '\n', '\r', '\t'));
-        all!(space.clone(), node, space)
+        all!(&"~", node, &"~")
     }
-    let pair = || all!(&"string", wrap(':'), &"value");
+    let pair = || all!(&"string", wrap(':'), &"Value");
     let digit = || all!('0'..='9');
     let hex = || all!('u', repeat(4..4, any!(digit(), 'a'..='f', 'A'..='F')));
     let escape = || all!('\\', any!('\\', '/', '"', 'b', 'f', 'n', 'r', 't', hex()));
@@ -54,34 +53,27 @@ pub fn node() -> Node {
     let exponent = || all!(any!('e', 'E'), option(any!('+', '-')), repeat(1.., digit()));
     let number = || all!(integer(), option(fraction()), option(exponent()));
     all!(
-        define(".", &"Value"),
         define("~", repeat(.., any!(' ', '\n', '\r', '\t'))),
-        define(
-            "value",
-            any!(&"null", &"true", &"false", &"string", &"array", &"object", &"number")
-        ),
-        syntax("null", wrap("null")),
-        syntax("true", wrap("true")),
-        syntax("false", wrap("false")),
-        syntax("string", wrap(all!('"', store(repeat(.., letter())), '"'))),
+        syntax(".null", wrap("null")),
+        syntax(".true", wrap("true")),
+        syntax(".false", wrap("false")),
+        syntax(".string", wrap(all!('"', store(repeat(.., letter())), '"'))),
+        syntax(".array", all!(wrap('['), join(wrap(','), &""), wrap(']'))),
         syntax(
-            "array",
-            all!(wrap('['), join(wrap(','), &"value"), wrap(']'))
-        ),
-        syntax(
-            "object",
+            ".object",
             all!(wrap('{'), join(wrap(','), pair()), wrap('}'))
         ),
-        syntax("number", wrap(store(number()))),
+        syntax(".number", wrap(store(number()))),
     )
 }
 
 pub fn parse(text: &str) -> Option<Syntax> {
-    Parser::from(and(&"value", node()))
+    Parser::from(and(&"", node()))
         .parse(text)
+        .first()
         .and_then(|tree| convert(&tree))
 }
 
 pub fn generate() -> Option<String> {
-    Generator::from(and(&"value", node())).generate()
+    Generator::from(and(&"", node())).generate()
 }

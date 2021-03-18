@@ -317,9 +317,21 @@ impl Node {
         }
 
         fn define(identifier: Identifier, node: Node, state: &mut State) -> usize {
-            match state.references.get(&node) {
-                Some(index) => *index,
-                None => {
+            match (state.references.get(&node), identifier) {
+                (Some(index), _) => *index,
+                (None, Path(path)) => {
+                    let mut parts: Vec<_> = path.split(".").collect();
+                    while parts.len() > 0 {
+                        let index = index(Path(parts.join(".")), state);
+                        match mem::replace(&mut state.nodes[index], None) {
+                            Some(left) => state.nodes[index] = Some(or(left, node.clone())),
+                            None => state.nodes[index] = Some(node.clone()),
+                        }
+                        parts.pop();
+                    }
+                    index(Path(path), state)
+                }
+                (None, identifier) => {
                     let index = index(identifier, state);
                     state.nodes[index] = Some(node.clone());
                     state.references.insert(node, index);
@@ -430,12 +442,11 @@ impl Node {
         }
 
         fn shift_right(node: Node) -> Node {
-            match node {
+            match boolean(node) {
                 And(left, right) => match (*left, *right) {
                     (And(left, middle), right) => {
                         And(left, shift_right(And(middle, right.into())).into())
                     }
-                    (Shift(shift, node), True) => shift_right(and(True, Shift(shift, node))),
                     (Shift(shift, node), Symbol(symbol)) => {
                         let shift = shift + symbol.len_utf8();
                         shift_right(and(Symbol(symbol), Shift(shift, node)))
@@ -622,7 +633,7 @@ impl Node {
                     .collect::<Vec<_>>()
                     .join("\n")
             );
-            println!("{:?}", state.optimize);
+            println!("{:?}, {:?}", state.optimize, state.indices);
         }
 
         let mut state = State {
@@ -649,6 +660,12 @@ impl Node {
     }
 }
 
+impl Debug for Node {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), Error> {
+        Display::fmt(self, formatter)
+    }
+}
+
 impl Display for Node {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), Error> {
         match self {
@@ -668,7 +685,7 @@ impl Display for Node {
                 formatter.write_str("Define(")?;
                 identifier.fmt(formatter)?;
                 formatter.write_str(", ")?;
-                node.fmt(formatter)?;
+                Display::fmt(node, formatter)?;
                 formatter.write_str(")")
             }
             Refer(identifier) => identifier.fmt(formatter),
@@ -679,7 +696,7 @@ impl Display for Node {
                     if mem::replace(&mut separate, true) {
                         formatter.write_str(" & ")?;
                     }
-                    node.fmt(formatter)?;
+                    Display::fmt(node, formatter)?;
                 }
                 formatter.write_str(")")
             }
@@ -690,7 +707,7 @@ impl Display for Node {
                     if mem::replace(&mut separate, true) {
                         formatter.write_str(" | ")?;
                     }
-                    node.fmt(formatter)?;
+                    Display::fmt(node, formatter)?;
                 }
                 formatter.write_str(")")
             }
@@ -705,7 +722,7 @@ impl Display for Node {
                     Display::fmt(&case.0.escape_debug(), formatter)?;
                     formatter.write_str("'")?;
                     formatter.write_str(": ")?;
-                    case.1.fmt(formatter)?;
+                    Display::fmt(&case.1, formatter)?;
                 }
                 formatter.write_str("}")
             }
@@ -715,7 +732,7 @@ impl Display for Node {
                 formatter.write_str("]")
             }
             Depth(depth) => {
-                formatter.write_str("Depth(")?;
+                formatter.write_str("D(")?;
                 Display::fmt(depth, formatter)?;
                 formatter.write_str(")")
             }
@@ -725,7 +742,7 @@ impl Display for Node {
                     Stack::Pop => "-",
                 };
                 formatter.write_str(stack)?;
-                formatter.write_str("Store(")?;
+                formatter.write_str("S(")?;
                 Display::fmt(shift, formatter)?;
                 formatter.write_str(")")?;
                 formatter.write_str(stack)
@@ -744,7 +761,7 @@ impl Display for Node {
                 formatter.write_str(stack)
             }
             Shift(shift, node) => {
-                node.fmt(formatter)?;
+                Display::fmt(node, formatter)?;
                 formatter.write_str("<")?;
                 Display::fmt(shift, formatter)?;
                 formatter.write_str(">")

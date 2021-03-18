@@ -10,17 +10,19 @@ fn test(json: &str, syntax: Syntax) {
 
 #[test]
 fn aaaa() {
-    let tree = Parser::from(all!(
-        &"a",
-        syntax("a", repeat(.., any!(&"b", &"c", &"d", &"e"))),
-        syntax("b.0", store(all!("{", &"c", "}"))),
-        syntax("b.1", store(all!("<", &"c", ">"))),
-        syntax("c", all!("[", any!(store("boba"), &"b", &"c"), "]")),
-        syntax("d", all!("jango", repeat(1.., &"e"), "karl")),
-        syntax("e", all!(store("fe"), option(store("tt")), store('a'..'z'))),
+    let trees = Parser::from(all!(
+        repeat(1.., &""),
+        syntax(".b.0", store(all!("{", &".c", "}"))),
+        syntax(".b.1", store(all!("<", &".c", ">"))),
+        syntax(".c", all!("[", any!(store("boba"), &".b", &".c"), "]")),
+        syntax(".d", all!("jango", repeat(1.., &".e"), "karl")),
+        syntax(
+            ".e",
+            all!(store("fe"), option(store("tt")), store('a'..'z'))
+        ),
     ))
-    .parse("fettafep{[[boba]]}jangofettifettukarl");
-    println!("{:?}", tree);
+    .parse("fettafep{[<[boba]>]}jangofettifettukarl");
+    println!("{:?}", trees);
 }
 
 #[test]
