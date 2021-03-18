@@ -1,25 +1,28 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fmt::{Display, Error, Formatter};
+use std::hash::Hash;
 use std::mem;
+use std::ops::Range;
+use std::ops::RangeInclusive;
 use std::ops::{Bound, RangeBounds};
 use std::str;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use Identifier::*;
 use Node::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Identifier {
-    Unique(usize),
-    Path(String),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bind {
     None,
     Left,
     Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Identifier {
+    Unique(usize),
+    Index(usize),
+    Path(String),
 }
 
 // #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -101,12 +104,6 @@ pub enum Node {
     */
 }
 
-pub struct Context<T: Clone> {
-    pub definitions: HashMap<usize, Node>,
-    pub references: HashMap<usize, T>,
-    pub identifiers: HashMap<String, usize>,
-}
-
 pub trait ToNode {
     fn node(self) -> Node;
 }
@@ -139,26 +136,140 @@ impl ToNode for bool {
     }
 }
 
-impl<T: Clone> Context<T> {
-    pub fn new() -> Self {
-        Self {
-            definitions: HashMap::new(),
-            references: HashMap::new(),
-            identifiers: HashMap::new(),
+impl ToNode for char {
+    fn node(self) -> Node {
+        text(self)
+    }
+}
+
+impl ToNode for &str {
+    fn node(self) -> Node {
+        text(self)
+    }
+}
+
+impl ToNode for String {
+    fn node(self) -> Node {
+        text(self)
+    }
+}
+
+impl ToNode for Range<char> {
+    fn node(self) -> Node {
+        range(self.start, self.end)
+    }
+}
+
+impl ToNode for RangeInclusive<char> {
+    fn node(self) -> Node {
+        range(*self.start(), *self.end())
+    }
+}
+
+impl Node {
+    pub fn unique() -> usize {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn count(&self) -> usize {
+        match self {
+            And(left, right) => left.count() + right.count() + 1,
+            Or(left, right) => left.count() + right.count() + 1,
+            Define(_, node) => node.count() + 1,
+            Shift(_, node) => node.count() + 1,
+            Switch(cases) => cases
+                .iter()
+                .fold(1, |count, case| count + case.1.count() + 1),
+            _ => 1,
         }
     }
 
-    pub fn resolve(&mut self, node: Node) -> Node {
+    pub fn map(self, map: impl FnMut(Self) -> Self) -> Self {
+        let mut map = map;
+        match self {
+            And(mut left, mut right) => {
+                *left = map(*left);
+                *right = map(*right);
+                And(left, right)
+            }
+            Or(mut left, mut right) => {
+                *left = map(*left);
+                *right = map(*right);
+                Or(left, right)
+            }
+            Define(identifier, mut node) => {
+                *node = map(*node);
+                Define(identifier, node)
+            }
+            Shift(shift, mut node) => {
+                *node = map(*node);
+                Shift(shift, node)
+            }
+            Switch(mut cases) => {
+                for case in cases.iter_mut() {
+                    let value = mem::replace(&mut case.1, True);
+                    case.1 = map(value);
+                }
+                Switch(cases)
+            }
+            node => node,
+        }
+    }
+
+    pub fn descend(self, map: impl FnMut(Self) -> Self) -> Self {
+        fn next(node: Node, map: &mut impl FnMut(Node) -> Node) -> Node {
+            let node = node.map(|node| next(node, map));
+            map(node)
+        }
+
+        let mut map = map;
+        next(self, &mut map)
+    }
+
+    pub fn flatten(&self) -> Vec<&Node> {
+        fn all<'a>(node: &'a Node, nodes: &mut Vec<&'a Node>) {
+            match node {
+                And(left, right) => {
+                    all(left, nodes);
+                    all(right, nodes);
+                }
+                _ => nodes.push(node),
+            }
+        }
+
+        fn any<'a>(node: &'a Node, nodes: &mut Vec<&'a Node>) {
+            match node {
+                Or(left, right) => {
+                    any(left, nodes);
+                    any(right, nodes);
+                }
+                _ => nodes.push(node),
+            }
+        }
+
+        let mut nodes = Vec::new();
+        match self {
+            And(_, _) => all(self, &mut nodes),
+            Or(_, _) => any(self, &mut nodes),
+            _ => nodes.push(self),
+        }
+        nodes
+    }
+
+    pub fn resolve(self) -> (Node, Vec<Node>) {
+        struct State {
+            nodes: Vec<Option<Node>>,
+            references: HashMap<Node, usize>,
+            indices: HashMap<Identifier, usize>,
+            optimize: HashSet<usize>,
+            refer_threshold: usize,
+        }
+
         /*
             TODO: Apply precedence properly.
-            TODO: Find a way to optimize through 'Store/Precedence' nodes.
-            TODO: Find a way to reproduce 'push/pop' behavior of 'state.path' that 'Refer' nodes do.
             TODO: This transformation: '{ 'a': b } | (c | { 'd': e }) => { 'a': b, 'c': d } | e'?
-                - does not respect order of resolution of '|'
-            TODO: Why do stack operations sometimes don't traverse this pattern?
-                - Stack(0, Push) & { 'a': b, 'c': d } => { 'a': Stack(1, Push) & b, 'c': Stack(1, Push) & d }
-            TODO: Combine 'Depth' some more in 'un_depth':
-                - Depth(a) & (Store|Precede) & Depth(b) => (Store|Precede) & Depth(a + b)
+                - requires to commit to unordered '|'
         */
 
         // fn prioritize(node: Node, priority: usize) -> Node {
@@ -173,15 +284,80 @@ impl<T: Clone> Context<T> {
         //     node.map(|node| prioritize(node, priority))
         // }
 
-        fn identify<T: Clone>(node: Node, context: &mut Context<T>) -> Node {
-            match node {
-                Define(identifier, node) => {
-                    context.define(&identifier, *node);
-                    True
-                }
-                Refer(identifier) => Refer(Unique(context.identify(&identifier))),
+        fn normalize(node: Node) -> Node {
+            match boolean(node) {
+                And(left, right) => match (*left, *right) {
+                    (And(left, middle), right) => And(left, And(middle, right.into()).into()),
+                    (left, right) => and(left, right),
+                },
+                Or(left, right) => match (*left, *right) {
+                    (Or(left, middle), right) => Or(left, Or(middle, right.into()).into()),
+                    (left, right) => or(left, right),
+                },
+                Switch(mut cases) => any(cases.drain(..).map(|pair| and(pair.0, pair.1)).collect())
+                    .descend(normalize),
+                Text(text) => all(text.chars().map(Symbol).collect()).descend(normalize),
                 node => node,
             }
+        }
+
+        fn index(identifier: Identifier, state: &mut State) -> usize {
+            match identifier {
+                Index(index) => index,
+                identifier => match state.indices.get(&identifier) {
+                    Some(index) => *index,
+                    None => {
+                        let index = state.nodes.len();
+                        state.nodes.push(None);
+                        state.indices.insert(identifier, index);
+                        index
+                    }
+                },
+            }
+        }
+
+        fn define(identifier: Identifier, node: Node, state: &mut State) -> usize {
+            match state.references.get(&node) {
+                Some(index) => *index,
+                None => {
+                    let index = index(identifier, state);
+                    state.nodes[index] = Some(node.clone());
+                    state.references.insert(node, index);
+                    index
+                }
+            }
+        }
+
+        fn refer(node: Node, state: &mut State) -> Node {
+            Refer(Index(define(Unique(Node::unique()), node, state)))
+        }
+
+        fn identify(node: Node, state: &mut State) -> Node {
+            match boolean(node) {
+                Define(identifier, node) => {
+                    define(identifier, *node, state);
+                    True
+                }
+                Refer(identifier) => Refer(Index(index(identifier, state))),
+                // node if node.count() > 8 => refer(node, state),
+                node => node,
+            }
+        }
+
+        fn expand(node: Node, state: &mut State) -> Node {
+            fn next(node: Node, state: &mut State) -> Node {
+                match node {
+                    Refer(Index(index)) if state.optimize.insert(index) => {
+                        let node = optimize(state.nodes[index].clone().unwrap(), state);
+                        state.nodes[index] = Some(node.clone());
+                        node
+                    }
+                    Refer(Index(index)) => state.nodes[index].clone().unwrap(),
+                    node => node.map(|node| next(node, state)),
+                }
+            }
+
+            next(node, state)
         }
 
         /// (a & b) | (a & c) => a & (b | c)
@@ -323,36 +499,50 @@ impl<T: Clone> Context<T> {
             }
         }
 
+        /// { 'a': b, 'c': d } & e => { 'a': b & e, 'c': d & e }
         /// { 'a': b } | ({ 'c': d } | e) => { 'a': b, 'c': d } | e
-        fn process(node: Node) -> Node {
+        fn process(node: Node, state: &mut State) -> Node {
             match boolean(node) {
                 And(left, right) => match (*left, *right) {
-                    (And(left, middle), right) => {
-                        process(And(left, process(And(middle, right.into())).into()))
-                    }
+                    (And(left, middle), right) => process(
+                        And(left, process(And(middle, right.into()), state).into()),
+                        state,
+                    ),
                     (Switch(mut left), right) => {
+                        let node = if left.len() <= 1
+                            || left.len() * right.count() <= state.refer_threshold
+                        {
+                            right
+                        } else {
+                            // If the cloning of the 'right' node would cause an explosion in nodes,
+                            // create a reference instead. In that case, the optimization must be
+                            // manually completed for the node.
+                            refer(right.descend(post), state)
+                        };
+
                         for case in left.iter_mut() {
                             let value = mem::replace(&mut case.1, True);
-                            case.1 = process(and(value, right.clone()));
+                            case.1 = process(and(value, node.clone()), state);
                         }
-                        process(Switch(left))
+                        Switch(left)
                     }
                     (left, right) => and(left, right),
                 },
                 Or(left, right) => match (*left, *right) {
-                    (Or(left, middle), right) => {
-                        process(Or(left, process(Or(middle, right.into())).into()))
-                    }
-                    (Switch(mut left), Or(middle, right)) => match (*middle, *right) {
-                        (Switch(mut middle), right) => {
+                    (Or(left, middle), right) => process(
+                        Or(left, process(Or(middle, right.into()), state).into()),
+                        state,
+                    ),
+                    (Switch(mut left), Or(middle, right)) => match *middle {
+                        Switch(mut middle) => {
                             left.append(&mut middle);
-                            process(or(Switch(left), right))
+                            process(Or(Switch(left).into(), right), state)
                         }
-                        (middle, right) => or(Switch(left), or(middle, right)),
+                        middle => or(Switch(left), Or(middle.into(), right)),
                     },
                     (Switch(mut left), Switch(mut right)) => {
                         left.append(&mut right);
-                        process(Switch(left))
+                        process(Switch(left), state)
                     }
                     (left, right) => or(left, right),
                 },
@@ -362,13 +552,14 @@ impl<T: Clone> Context<T> {
                     for case in cases.drain(..) {
                         match map.get_mut(&case.0) {
                             Some(value) => {
-                                *value = process(or(mem::replace(value, True), case.1));
+                                *value = process(or(mem::replace(value, True), case.1), state);
                             }
                             None => {
                                 map.insert(case.0, case.1);
                             }
                         };
                     }
+
                     for (key, value) in map {
                         cases.push((key, value));
                     }
@@ -406,177 +597,50 @@ impl<T: Clone> Context<T> {
             }
         }
 
-        fn expand<T: Clone>(
-            node: Node,
-            context: &mut Context<T>,
-            set: &mut HashSet<usize>,
-        ) -> Node {
-            match node {
-                Refer(Unique(identifier)) => {
-                    if set.insert(identifier) {
-                        let node = context.definitions[&identifier].clone();
-                        let node = optimize(node, context, set);
-                        context.definitions.insert(identifier, node.clone());
-                        node
-                    } else {
-                        context.definitions[&identifier].clone()
-                    }
-                }
-                node => node,
-            }
-        }
-
-        fn optimize<T: Clone>(
-            node: Node,
-            context: &mut Context<T>,
-            set: &mut HashSet<usize>,
-        ) -> Node {
-            node.descend(|node| expand(node, context, set))
+        fn optimize(node: Node, state: &mut State) -> Node {
+            expand(node, state)
                 .descend(shift_right)
                 .descend(factor_left)
                 .descend(un_shift)
                 .descend(un_depth)
                 .descend(pre)
-                .descend(process)
+                .descend(|node| process(node, state))
                 .descend(post)
         }
 
-        println!("Original: {}", node.count());
-        println!("{}", node);
-        let node = node.descend(|node| identify(node, self));
-        let node = optimize(node, self, &mut HashSet::new());
-        println!("Optimize: {}", node.count());
-        println!("{}", node);
-        for pair in self.definitions.iter() {
-            println!("{}: {} => {}", pair.0, pair.1.count(), pair.1);
-        }
-        node
-    }
-
-    pub fn define(&mut self, identifier: &Identifier, node: Node) {
-        let identifier = self.identify(identifier);
-        self.definitions.insert(identifier, node);
-    }
-
-    pub fn identify(&mut self, identifier: &Identifier) -> usize {
-        match identifier {
-            Unique(identifier) => *identifier,
-            Path(path) => {
-                if let Some(identifier) = self.identifiers.get(path) {
-                    *identifier
-                } else {
-                    let identifier = Node::unique();
-                    self.identifiers.insert(path.clone(), identifier);
-                    identifier
-                }
-            }
-        }
-    }
-
-    pub fn refer(&mut self, identifier: &Identifier, reference: T) {
-        let identifier = self.identify(identifier);
-        self.references.insert(identifier, reference);
-    }
-
-    pub fn identifier(&self, identifier: &Identifier) -> Option<usize> {
-        Some(match identifier {
-            Unique(identifier) => *identifier,
-            Path(path) => *self.identifiers.get(path)?,
-        })
-    }
-
-    pub fn reference(&self, identifier: &Identifier) -> Option<T> {
-        Some(self.references.get(&self.identifier(identifier)?)?.clone())
-    }
-}
-
-impl Node {
-    pub fn unique() -> usize {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    }
-
-    pub fn count(&self) -> usize {
-        match self {
-            And(left, right) => left.count() + right.count() + 1,
-            Or(left, right) => left.count() + right.count() + 1,
-            Define(_, node) => node.count() + 1,
-            Shift(_, node) => node.count() + 1,
-            Switch(cases) => cases.iter().fold(1, |count, case| count + case.1.count()),
-            _ => 1,
-        }
-    }
-
-    pub fn map(self, map: impl FnMut(Self) -> Self) -> Self {
-        let mut map = map;
-        match self {
-            And(mut left, mut right) => {
-                *left = map(*left);
-                *right = map(*right);
-                And(left, right)
-            }
-            Or(mut left, mut right) => {
-                *left = map(*left);
-                *right = map(*right);
-                Or(left, right)
-            }
-            Define(identifier, mut node) => {
-                *node = map(*node);
-                Define(identifier, node)
-            }
-            Shift(shift, mut node) => {
-                *node = map(*node);
-                Shift(shift, node)
-            }
-            Switch(mut cases) => {
-                for case in cases.iter_mut() {
-                    let value = mem::replace(&mut case.1, True);
-                    case.1 = map(value);
-                }
-                Switch(cases)
-            }
-            node => node,
-        }
-    }
-
-    pub fn descend(self, map: impl FnMut(Self) -> Self) -> Self {
-        fn next(node: Node, map: &mut impl FnMut(Node) -> Node) -> Node {
-            let node = node.map(|node| next(node, map));
-            map(node)
+        fn print(title: &str, node: &Node, state: &State) {
+            println!();
+            println!("{}: {}", title, node);
+            println!(
+                "{}",
+                state
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .map(|pair| format!("{} => {}", pair.0, pair.1.as_ref().unwrap_or(&True)))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            println!("{:?}", state.optimize);
         }
 
-        let mut map = map;
-        next(self, &mut map)
-    }
+        let mut state = State {
+            nodes: Vec::new(),
+            references: HashMap::new(),
+            indices: HashMap::new(),
+            optimize: HashSet::new(),
+            refer_threshold: 1024,
+        };
+        print("ORIGINAL", &self, &state);
+        let node = self
+            .descend(normalize)
+            .descend(|node| identify(node, &mut state));
+        print("IDENTIFY", &node, &state);
+        let node = optimize(node, &mut state);
+        print("OPTIMIZE", &node, &state);
 
-    pub fn flatten(&self) -> Vec<&Node> {
-        fn all<'a>(node: &'a Node, nodes: &mut Vec<&'a Node>) {
-            match node {
-                And(left, right) => {
-                    all(left, nodes);
-                    all(right, nodes);
-                }
-                _ => nodes.push(node),
-            }
-        }
-
-        fn any<'a>(node: &'a Node, nodes: &mut Vec<&'a Node>) {
-            match node {
-                Or(left, right) => {
-                    any(left, nodes);
-                    any(right, nodes);
-                }
-                _ => nodes.push(node),
-            }
-        }
-
-        let mut nodes = Vec::new();
-        match self {
-            And(_, _) => all(self, &mut nodes),
-            Or(_, _) => any(self, &mut nodes),
-            _ => nodes.push(self),
-        }
-        nodes
+        let nodes = state.nodes.drain(..).map(|node| node.unwrap()).collect();
+        (node, nodes)
     }
 }
 
@@ -587,12 +651,12 @@ impl Display for Node {
             False => formatter.write_str("False"),
             Symbol(symbol) => {
                 formatter.write_str("'")?;
-                Display::fmt(symbol, formatter)?;
+                Display::fmt(&symbol.escape_debug(), formatter)?;
                 formatter.write_str("'")
             }
             Text(text) => {
                 formatter.write_str("\"")?;
-                formatter.write_str(text)?;
+                formatter.write_str(text.escape_debug().collect::<String>().as_str())?;
                 formatter.write_str("\"")
             }
             Define(identifier, node) => {
@@ -633,7 +697,7 @@ impl Display for Node {
                         formatter.write_str(", ")?;
                     }
                     formatter.write_str("'")?;
-                    Display::fmt(&case.0, formatter)?;
+                    Display::fmt(&case.0.escape_debug(), formatter)?;
                     formatter.write_str("'")?;
                     formatter.write_str(": ")?;
                     case.1.fmt(formatter)?;
@@ -736,7 +800,7 @@ pub fn repeat(range: impl RangeBounds<usize>, node: impl ToNode) -> Node {
         Some(high) if high > low => chain(vec![node.clone(); high - low]),
         Some(_) => True,
         None => {
-            let identifier = Unique(Node::unique());
+            let identifier = Identifier::Unique(Node::unique());
             let refer = Refer(identifier.clone());
             let node = option(and(node, refer.clone()));
             let define = Define(identifier, node.into());
@@ -747,16 +811,16 @@ pub fn repeat(range: impl RangeBounds<usize>, node: impl ToNode) -> Node {
 }
 
 pub fn refer(name: &str) -> Node {
-    Refer(Path(name.into()))
+    Refer(Identifier::Path(name.into()))
 }
 
 pub fn define(path: &str, node: impl ToNode) -> Node {
-    Define(Path(path.into()), node.node().into())
+    Define(Identifier::Path(path.into()), node.node().into())
 }
 
 pub fn syntax(path: &str, node: impl ToNode) -> Node {
     Define(
-        Path(path.into()),
+        Identifier::Path(path.into()),
         and(Depth(1), and(node, and(Depth(-1), Spawn(path.into())))).into(),
     )
 }
@@ -786,6 +850,13 @@ pub fn postfix(precedence: usize, bind: Bind, node: impl ToNode) -> Node {
 
 pub fn precede(prefix: impl ToNode, postfix: impl ToNode) -> Node {
     and(prefix, repeat(.., postfix))
+}
+
+pub fn range(low: char, high: char) -> Node {
+    any((low as u8..=high as u8)
+        .into_iter()
+        .map(|index| text(index as char))
+        .collect())
 }
 
 #[macro_export]

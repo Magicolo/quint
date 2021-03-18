@@ -1,3 +1,4 @@
+use crate::generate::*;
 use crate::node::*;
 use crate::parse::*;
 use crate::*;
@@ -15,10 +16,10 @@ pub enum Syntax {
 pub fn convert(tree: &Tree) -> Option<Syntax> {
     Some(match tree.kind.as_str() {
         "null" => Syntax::Null,
-        "number" => Syntax::Number(tree.value.parse().ok()?),
+        "number" => Syntax::Number(tree.values[0].parse().ok()?),
         "true" => Syntax::Boolean(true),
         "false" => Syntax::Boolean(false),
-        "string" => Syntax::String(tree.value.into()),
+        "string" => Syntax::String(tree.values[0].into()),
         "array" => {
             let mut items = Vec::new();
             for child in tree.children.iter() {
@@ -62,7 +63,7 @@ pub fn node() -> Node {
         syntax("null", wrap("null")),
         syntax("true", wrap("true")),
         syntax("false", wrap("false")),
-        syntax("string", wrap(all!('"', repeat(.., letter()), '"'))),
+        syntax("string", wrap(all!('"', store(repeat(.., letter())), '"'))),
         syntax(
             "array",
             all!(wrap('['), join(wrap(','), &"value"), wrap(']'))
@@ -71,14 +72,16 @@ pub fn node() -> Node {
             "object",
             all!(wrap('{'), join(wrap(','), pair()), wrap('}'))
         ),
-        syntax("number", wrap(number())),
+        syntax("number", wrap(store(number()))),
     )
 }
 
 pub fn parse(text: &str) -> Option<Syntax> {
-    parse::parse(text, and(&"value", node())).and_then(|tree| convert(&tree))
+    Parser::from(and(&"value", node()))
+        .parse(text)
+        .and_then(|tree| convert(&tree))
 }
 
 pub fn generate() -> Option<String> {
-    generate::generate(and(&"value", node()))
+    Generator::from(and(&"value", node())).generate()
 }

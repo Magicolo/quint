@@ -1,6 +1,7 @@
 extern crate quint;
 use quint::json::*;
 use quint::node::*;
+use quint::parse::*;
 use quint::*;
 
 fn test(json: &str, syntax: Syntax) {
@@ -9,17 +10,16 @@ fn test(json: &str, syntax: Syntax) {
 
 #[test]
 fn aaaa() {
-    let tree = parse::parse(
-        "fett{[boba]}jangofettfettkarl",
-        all!(
-            &"a",
-            syntax("a", repeat(.., any!(&"b", &"c", &"d", &"e"))),
-            syntax("b", store(all!("{", &"c", "}"))),
-            syntax("c", all!("[", any!(store("boba"), &"b", &"c"), "]")),
-            syntax("d", all!("jango", repeat(1.., &"e"), "karl")),
-            syntax("e", all!(store("fe"), "tt")),
-        ),
-    );
+    let tree = Parser::from(all!(
+        &"a",
+        syntax("a", repeat(.., any!(&"b", &"c", &"d", &"e"))),
+        syntax("b.0", store(all!("{", &"c", "}"))),
+        syntax("b.1", store(all!("<", &"c", ">"))),
+        syntax("c", all!("[", any!(store("boba"), &"b", &"c"), "]")),
+        syntax("d", all!("jango", repeat(1.., &"e"), "karl")),
+        syntax("e", all!(store("fe"), option(store("tt")), store('a'..'z'))),
+    ))
+    .parse("fettafep{[[boba]]}jangofettifettukarl");
     println!("{:?}", tree);
 }
 

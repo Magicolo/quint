@@ -1,3 +1,4 @@
+use crate::generate::*;
 use crate::node::*;
 use crate::parse::*;
 use crate::*;
@@ -39,7 +40,7 @@ pub fn convert(tree: &Tree) -> Option<Syntax> {
         ))
     };
     Some(match tree.kind.as_str() {
-        "number" => Syntax::Number(tree.value.parse().ok()?),
+        "number" => Syntax::Number(tree.values[0].parse().ok()?),
         "absolute" => unary(Unary::Absolute)?,
         "negate" => unary(Unary::Negate)?,
         "pre-increment" => unary(Unary::PreIncrement)?,
@@ -107,9 +108,11 @@ pub fn node() -> Node {
 }
 
 pub fn parse(text: &str) -> Option<Syntax> {
-    parse::parse(text, and(&"expression", node())).and_then(|tree| convert(&tree))
+    Parser::from(and(&"expression", node()))
+        .parse(text)
+        .and_then(|tree| convert(&tree))
 }
 
 pub fn generate() -> Option<String> {
-    generate::generate(and(&"expression", node()))
+    Generator::from(and(&"expression", node())).generate()
 }

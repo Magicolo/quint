@@ -2,110 +2,123 @@ use crate::node::*;
 use rand;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
-use std::mem;
 use std::rc::Rc;
+use Identifier::*;
 use Node::*;
 
-pub struct State {
+#[derive(Clone)]
+pub struct Generator<'a> {
+    root: Generate<'a>,
+    references: Vec<Generate<'a>>,
+}
+
+struct State<'a> {
     pub text: String,
     pub random: ThreadRng,
+    pub references: Vec<Generate<'a>>,
     pub precedence: usize,
 }
 
-#[derive(Clone)]
-pub struct Generator(Rc<Generate>);
-pub type Generate = dyn Fn(&mut State, &Context<Generator>) -> bool;
+type Generate<'a> = Rc<dyn Fn(&mut State<'a>) -> bool + 'a>;
 
-pub fn generator(node: Node) -> (Generator, Context<Generator>) {
-    fn next(node: &Node, context: &mut Context<Generator>) -> Generator {
-        match node {
-            True => Generator(Rc::new(|_, _| true)),
-            False => Generator(Rc::new(|_, _| false)),
-            And(_, _) => {
-                let nodes = node.flatten();
-                let generators: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
-                Generator(Rc::new(move |state, context| {
-                    for generator in &generators {
-                        if generator.0(state, context) {
-                            continue;
-                        }
-                        return false;
-                    }
-                    true
-                }))
-            }
-            Or(_, _) => {
-                let nodes = node.flatten();
-                let generators: Vec<_> = nodes.iter().map(|node| next(node, context)).collect();
-                Generator(Rc::new(move |state, context| {
-                    for generator in generators.choose_multiple(&mut state.random, generators.len())
-                    {
-                        if generator.0(state, context) {
-                            return true;
-                        }
-                    }
-                    false
-                }))
-            }
-            Define(identifier, node) => {
-                let generator = next(node, context);
-                context.refer(identifier, generator);
-                next(&True, context)
-            }
-            Refer(identifier) => {
-                let identifier = context.identify(identifier);
-                Generator(Rc::new(move |state, context| {
-                    match context.references.get(&identifier) {
-                        Some(generator) => generator.0(state, context),
-                        None => false,
-                    }
-                }))
-            }
-            Spawn(_) => next(&True, context),
-            Depth(_) => next(&True, context),
-            Store(_, _) => next(&True, context),
-            Precede(_, _, _) => next(&True, context),
-            Symbol(symbol) => {
-                let symbol = *symbol;
-                Generator(Rc::new(move |state, _| {
-                    state.text.push(symbol);
-                    true
-                }))
-            }
-            Text(text) => {
-                let text = text.clone();
-                Generator(Rc::new(move |state, _| {
-                    state.text.push_str(text.as_str());
-                    true
-                }))
-            }
-            Switch(cases) => {
-                let mut nodes = Vec::new();
-                for case in cases {
-                    nodes.push(and(case.0, case.1.clone()));
-                }
-                next(&any(nodes), context)
-            }
-            node => panic!("Invalid node '{}'.", node),
+impl<'a> Generator<'a> {
+    pub fn generate(&self) -> Option<String> {
+        let mut state = State {
+            text: String::new(),
+            random: rand::thread_rng(),
+            references: self.references.clone(),
+            precedence: 0,
+        };
+
+        if (self.root)(&mut state) {
+            Some(state.text)
+        } else {
+            None
         }
     }
-
-    let mut context = Context::new();
-    let node = context.resolve(node);
-    (next(&node, &mut context), context)
 }
 
-pub fn generate(node: Node) -> Option<String> {
-    let (generator, context) = generator(node);
-    let mut state = State {
-        text: String::new(),
-        random: rand::thread_rng(),
-        precedence: 0,
-    };
+impl<'a> From<Node> for Generator<'a> {
+    fn from(node: Node) -> Generator<'a> {
+        fn next<'a>(node: &Node, generators: &Vec<Option<Generate<'a>>>) -> Generate<'a> {
+            match node {
+                True => Rc::new(|_| true),
+                False => Rc::new(|_| false),
+                And(_, _) => {
+                    let nodes = node.flatten();
+                    let generators: Vec<_> =
+                        nodes.iter().map(|node| next(node, generators)).collect();
+                    Rc::new(move |state| {
+                        for generator in &generators {
+                            if generator(state) {
+                                continue;
+                            }
+                            return false;
+                        }
+                        true
+                    })
+                }
+                Or(_, _) => {
+                    let nodes = node.flatten();
+                    let generators: Vec<_> =
+                        nodes.iter().map(|node| next(node, generators)).collect();
+                    Rc::new(move |state| {
+                        for generator in
+                            generators.choose_multiple(&mut state.random, generators.len())
+                        {
+                            if generator(state) {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                }
+                Refer(Index(index)) => {
+                    let index = *index;
+                    match &generators[index] {
+                        Some(generator) => generator.clone(),
+                        None => Rc::new(move |state| state.references[index].clone()(state)),
+                    }
+                }
+                Spawn(_) => next(&True, generators),
+                Depth(_) => next(&True, generators),
+                Store(_, _) => next(&True, generators),
+                Precede(_, _, _) => next(&True, generators),
+                Symbol(symbol) => {
+                    let symbol = *symbol;
+                    Rc::new(move |state| {
+                        state.text.push(symbol);
+                        true
+                    })
+                }
+                Text(text) => {
+                    let text = text.clone();
+                    Rc::new(move |state| {
+                        state.text.push_str(text.as_str());
+                        true
+                    })
+                }
+                Switch(cases) => {
+                    let mut nodes = Vec::new();
+                    for case in cases {
+                        nodes.push(and(case.0, case.1.clone()));
+                    }
+                    next(&any(nodes), generators)
+                }
+                node => panic!("Invalid node '{}'.", node),
+            }
+        }
 
-    if generator.0(&mut state, &context) {
-        Some(state.text)
-    } else {
-        None
+        let (node, nodes) = node.resolve();
+        let mut generators = vec![None; nodes.len()];
+        for i in 0..nodes.len() {
+            generators[i] = Some(next(&nodes[i], &generators));
+        }
+        let root = next(&node, &generators);
+        let references = generators
+            .drain(..)
+            .map(|generator| generator.unwrap())
+            .collect();
+        Generator { root, references }
     }
 }
