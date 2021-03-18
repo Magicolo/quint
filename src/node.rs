@@ -348,11 +348,12 @@ impl Node {
             fn next(node: Node, state: &mut State) -> Node {
                 match node {
                     Refer(Index(index)) if state.optimize.insert(index) => {
-                        let node = optimize(state.nodes[index].clone().unwrap(), state);
+                        let node = state.nodes[index].clone().unwrap_or(False);
+                        let node = optimize(node, state);
                         state.nodes[index] = Some(node.clone());
                         node
                     }
-                    Refer(Index(index)) => state.nodes[index].clone().unwrap(),
+                    Refer(Index(index)) => state.nodes[index].clone().unwrap_or(False),
                     node => node.map(|node| next(node, state)),
                 }
             }
@@ -639,7 +640,11 @@ impl Node {
         let node = optimize(node, &mut state);
         print("OPTIMIZE", &node, &state);
 
-        let nodes = state.nodes.drain(..).map(|node| node.unwrap()).collect();
+        let nodes = state
+            .nodes
+            .drain(..)
+            .map(|node| node.unwrap_or(False))
+            .collect();
         (node, nodes)
     }
 }
