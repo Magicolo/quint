@@ -11,13 +11,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use Identifier::*;
 use Node::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Bind {
-    None,
-    Left,
-    Right,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Identifier {
     Unique(usize),
@@ -38,6 +31,13 @@ pub enum Identifier {
 //     Equal,
 //     Greater,
 // }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Bind {
+    None,
+    Left,
+    Right,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stack {
@@ -643,13 +643,13 @@ impl Node {
             optimize: HashSet::new(),
             refer_threshold: 1024,
         };
-        print("ORIGINAL", &self, &state);
+        // print("ORIGINAL", &self, &state);
         let node = self
             .descend(normalize)
             .descend(|node| identify(node, &mut state));
-        print("IDENTIFY", &node, &state);
+        // print("IDENTIFY", &node, &state);
         let node = optimize(node, &mut state);
-        print("OPTIMIZE", &node, &state);
+        // print("OPTIMIZE", &node, &state);
 
         let nodes = state
             .nodes

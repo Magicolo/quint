@@ -24,16 +24,18 @@ pub struct Tree<'a> {
 }
 
 #[derive(Clone)]
-pub struct Parser<'a> {
-    root: Parse<'a>,
-    references: Vec<Parse<'a>>,
+pub struct Parser {
+    root: Parse,
+    references: Vec<Parse>,
 }
 
+type Parse = Rc<dyn Fn(&mut State) -> bool>;
+
 #[derive(Clone)]
-struct State<'a> {
+struct State<'a, 'b> {
     pub index: usize,
     pub text: &'a str,
-    pub references: Vec<Parse<'a>>,
+    pub references: &'b Vec<Parse>,
     pub trees: Vec<(Tree<'a>, isize)>,
     pub precedences: Vec<usize>,
     pub indices: Vec<usize>,
@@ -42,14 +44,12 @@ struct State<'a> {
     pub depth: isize,
 }
 
-type Parse<'a> = Rc<dyn Fn(&mut State<'a>) -> bool + 'a>;
-
-impl<'a> Parser<'a> {
-    pub fn parse(&self, text: &'a str) -> Vec<Tree<'a>> {
+impl Parser {
+    pub fn parse<'a>(&self, text: &'a str) -> Vec<Tree<'a>> {
         let mut state = State {
             index: 0,
             text,
-            references: self.references.clone(),
+            references: &self.references,
             trees: Vec::new(),
             precedences: Vec::new(),
             indices: Vec::new(),
@@ -66,8 +66,8 @@ impl<'a> Parser<'a> {
     }
 }
 
-impl<'a> From<Node> for Parser<'a> {
-    fn from(node: Node) -> Parser<'a> {
+impl From<Node> for Parser {
+    fn from(node: Node) -> Parser {
         fn consume<T>(pairs: &mut Vec<(T, isize)>, depth: isize) -> Vec<T> {
             let mut values = Vec::new();
             while let Some(pair) = pairs.pop() {
@@ -82,7 +82,7 @@ impl<'a> From<Node> for Parser<'a> {
             values
         }
 
-        fn next<'a>(node: &Node, references: &Vec<Option<Parse<'a>>>) -> Parse<'a> {
+        fn next(node: &Node, references: &Vec<Option<Parse>>) -> Parse {
             match node {
                 True => Rc::new(|_| true),
                 False => Rc::new(|_| false),

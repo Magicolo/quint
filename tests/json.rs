@@ -19,7 +19,7 @@ fn aaaa() {
         syntax(
             ".e",
             all!(store("fe"), option(store("tt")), store('a'..'z'))
-        ),
+        )
     ))
     .parse("fettafep{[<[boba]>]}jangofettifettukarl");
     println!("{:?}", trees);
@@ -74,8 +74,10 @@ fn nested_array() {
 
 #[test]
 fn generate_mixed() {
-    for _ in 0..100 {
-        let text = generate().unwrap();
-        parse(&text).unwrap();
+    let parser = parser();
+    let generator = generator();
+    for _ in 0..1000 {
+        let text = generator.generate().unwrap();
+        parser.parse(&text).first().unwrap();
     }
 }

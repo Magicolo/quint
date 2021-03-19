@@ -7,26 +7,26 @@ use Identifier::*;
 use Node::*;
 
 #[derive(Clone)]
-pub struct Generator<'a> {
-    root: Generate<'a>,
-    references: Vec<Generate<'a>>,
+pub struct Generator {
+    root: Generate,
+    references: Vec<Generate>,
 }
 
 struct State<'a> {
     pub text: String,
     pub random: ThreadRng,
-    pub references: Vec<Generate<'a>>,
+    pub references: &'a Vec<Generate>,
     pub precedence: usize,
 }
 
-type Generate<'a> = Rc<dyn Fn(&mut State<'a>) -> bool + 'a>;
+type Generate = Rc<dyn Fn(&mut State) -> bool>;
 
-impl<'a> Generator<'a> {
+impl Generator {
     pub fn generate(&self) -> Option<String> {
         let mut state = State {
             text: String::new(),
             random: rand::thread_rng(),
-            references: self.references.clone(),
+            references: &self.references,
             precedence: 0,
         };
 
@@ -38,9 +38,9 @@ impl<'a> Generator<'a> {
     }
 }
 
-impl<'a> From<Node> for Generator<'a> {
-    fn from(node: Node) -> Generator<'a> {
-        fn next<'a>(node: &Node, generators: &Vec<Option<Generate<'a>>>) -> Generate<'a> {
+impl From<Node> for Generator {
+    fn from(node: Node) -> Generator {
+        fn next(node: &Node, generators: &Vec<Option<Generate>>) -> Generate {
             match node {
                 True => Rc::new(|_| true),
                 False => Rc::new(|_| false),

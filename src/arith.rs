@@ -62,14 +62,19 @@ pub fn node() -> Node {
         all!(space.clone(), node, space)
     }
     fn unary<N: ToNode>(operator: N) -> Node {
-        prefix(100, wrap(all!(operator, &"")))
+        prefix(100, wrap(all!(operator, &"expression")))
     }
     fn binary<N: ToNode>(operator: N, precedence: usize, bind: Bind) -> Node {
-        postfix(precedence, bind, wrap(all!(wrap(operator), &"")))
+        postfix(precedence, bind, wrap(all!(wrap(operator), &"expression")))
     }
     all!(
-        define(".expression", precede(&"pre", &"post")),
-        define("pre.group", prefix(100, all!(wrap('('), &"", wrap(')')))),
+        define(".", &"expression"),
+        define("~", repeat(.., any!(' ', '\n', '\r', '\t'))),
+        define("expression", precede(&"pre", &"post")),
+        define(
+            "pre.group",
+            prefix(100, all!(wrap('('), &"expression", wrap(')')))
+        ),
         syntax(
             "pre.number",
             prefix(100, wrap(store(all!(repeat(1.., digit())))))

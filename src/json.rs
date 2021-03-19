@@ -43,7 +43,7 @@ pub fn node() -> Node {
     fn wrap<N: ToNode>(node: N) -> Node {
         all!(&"~", node, &"~")
     }
-    let pair = || all!(&"string", wrap(':'), &"Value");
+    let pair = || all!(&".string", wrap(':'), &"");
     let digit = || all!('0'..='9');
     let hex = || all!('u', repeat(4..4, any!(digit(), 'a'..='f', 'A'..='F')));
     let escape = || all!('\\', any!('\\', '/', '"', 'b', 'f', 'n', 'r', 't', hex()));
@@ -58,22 +58,27 @@ pub fn node() -> Node {
         syntax(".true", wrap("true")),
         syntax(".false", wrap("false")),
         syntax(".string", wrap(all!('"', store(repeat(.., letter())), '"'))),
+        syntax(".number", wrap(store(number()))),
         syntax(".array", all!(wrap('['), join(wrap(','), &""), wrap(']'))),
         syntax(
             ".object",
             all!(wrap('{'), join(wrap(','), pair()), wrap('}'))
         ),
-        syntax(".number", wrap(store(number()))),
     )
 }
 
-pub fn parse(text: &str) -> Option<Syntax> {
+pub fn parser() -> Parser {
     Parser::from(and(&"", node()))
-        .parse(text)
-        .first()
-        .and_then(|tree| convert(&tree))
+}
+
+pub fn parse(text: &str) -> Option<Syntax> {
+    parser().parse(text).first().and_then(|tree| convert(&tree))
+}
+
+pub fn generator() -> Generator {
+    Generator::from(and(&"", node()))
 }
 
 pub fn generate() -> Option<String> {
-    Generator::from(and(&"", node())).generate()
+    generator().generate()
 }
