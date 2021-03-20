@@ -75,12 +75,12 @@ pub enum Node {
     - indent:
         And(
             Set("indent", Value(0)),
-            Loop(And(
-                Symbol('\t'),
-                Set("indent", Add(1))
+            Define(0, Or(
+                And(Symbol('\t'), Set("indent", Add(1)), Refer(0)),
+                True
             )),
             If("indent", >, "$.indent"),
-            Set("$.index", Copy("index")),
+            Set(".index", Copy("index")),
         )
     - dedent:
         And(
@@ -89,15 +89,15 @@ pub enum Node {
                 Symbol('\t'),
                 Set("indent", Add(1))
             )),
-            If("indent", <, "$.indent"),
-            Set("$.index", Copy("index")),
+            If("indent", <, ".indent"),
+            Set(".index", Copy("index")),
         )
     - precedence:
         And(
             Set("precedence", Value(precedence * 2)),
-            If("precedence", >, "$.precedence"),
+            If("precedence", >, ".precedence"),
             Push(),
-            Set("$.precedence", Value(Bind::Left => precedence * 2, Bind::Right => precedence * 2 - 1)),
+            Set(".precedence", Value(Bind::Left => precedence * 2, Bind::Right => precedence * 2 - 1)),
             node,
             Pop(),
         )
@@ -340,8 +340,11 @@ impl Node {
             }
         }
 
-        fn refer(node: Node, state: &mut State) -> Node {
-            Refer(Index(define(Unique(Node::unique()), node, state)))
+        fn update(index: usize, state: &mut State) {
+            if state.optimize.insert(index) {
+                let node = state.nodes[index].clone().unwrap_or(False);
+                state.nodes[index] = Some(optimize(node, state));
+            }
         }
 
         fn identify(node: Node, state: &mut State) -> Node {
@@ -351,7 +354,6 @@ impl Node {
                     True
                 }
                 Refer(identifier) => Refer(Index(index(identifier, state))),
-                // node if node.count() > 8 => refer(node, state),
                 node => node,
             }
         }
@@ -359,13 +361,10 @@ impl Node {
         fn expand(node: Node, state: &mut State) -> Node {
             fn next(node: Node, state: &mut State) -> Node {
                 match node {
-                    Refer(Index(index)) if state.optimize.insert(index) => {
-                        let node = state.nodes[index].clone().unwrap_or(False);
-                        let node = optimize(node, state);
-                        state.nodes[index] = Some(node.clone());
-                        node
+                    Refer(Index(index)) => {
+                        update(index, state);
+                        state.nodes[index].clone().unwrap_or(False)
                     }
-                    Refer(Index(index)) => state.nodes[index].clone().unwrap_or(False),
                     node => node.map(|node| next(node, state)),
                 }
             }
@@ -529,7 +528,10 @@ impl Node {
                             // If the cloning of the 'right' node would cause an explosion in nodes,
                             // create a reference instead. In that case, the optimization must be
                             // manually completed for the node.
-                            refer(right.descend(post), state)
+                            let node = right.descend(post);
+                            let index = define(Unique(Node::unique()), node, state);
+                            state.optimize.insert(index);
+                            Refer(Index(index))
                         };
 
                         for case in left.iter_mut() {
@@ -629,11 +631,17 @@ impl Node {
                     .nodes
                     .iter()
                     .enumerate()
-                    .map(|pair| format!("{} => {}", pair.0, pair.1.as_ref().unwrap_or(&True)))
+                    .map(|pair| {
+                        let node = pair.1.as_ref().unwrap_or(&False);
+                        format!("{}: {} => {}", pair.0, node.count(), node)
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
             );
-            println!("{:?}, {:?}", state.optimize, state.indices);
+            let count = state.nodes.iter().fold(node.count(), |sum, node| {
+                sum + node.as_ref().map(|node| node.count()).unwrap_or(0)
+            });
+            println!("{}: {:?}, {:?}", count, state.optimize, state.indices);
         }
 
         let mut state = State {
@@ -643,14 +651,20 @@ impl Node {
             optimize: HashSet::new(),
             refer_threshold: 1024,
         };
-        // print("ORIGINAL", &self, &state);
+        print("ORIGINAL", &self, &state);
         let node = self
             .descend(normalize)
             .descend(|node| identify(node, &mut state));
         // print("IDENTIFY", &node, &state);
         let node = optimize(node, &mut state);
-        // print("OPTIMIZE", &node, &state);
+        for i in 0..state.nodes.len() {
+            if state.optimize.contains(&i) {
+            } else {
+                state.nodes[i] = None;
+            }
+        }
 
+        print("OPTIMIZE", &node, &state);
         let nodes = state
             .nodes
             .drain(..)

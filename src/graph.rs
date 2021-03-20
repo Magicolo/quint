@@ -3,19 +3,18 @@ use std::mem;
 /*
 language Json {
     parse {
-        . = Value;
         ~ = (' ' | '\t' | '\n' | '\r'){..};
         let integer = ~ & '-' & (0 | (1..9 & 0..9{..}));
         let fraction = '.' & 0..9{1..};
         let exponent = ('e'|'E') & ('+' | '-')? & integer;
 
-        Value.Null = "null";
-        Value.True = "true";
-        Value.False = "false";
-        Value.Number = (integer & fraction? & exponent?)!;
-        Value.String = ~'"' & ('\u0'..'\u128')! & '"'~;
-        Value.Array = "[" & Value{..;","} & "]";
-        Value.Object = "{" & (String & ":" & Value){..;","} & "}";
+        .Null = "null";
+        .True = "true";
+        .False = "false";
+        .Number = (integer & fraction? & exponent?)!;
+        .String = ~ & '"' & ('\u0'..'\u128')! & '"' & ~;
+        .Array = "[" & .{..;","} & "]";
+        .Object = "{" & (.String & ":" & .){..;","} & "}";
     }
 
     convert {
@@ -28,13 +27,13 @@ language Json {
             Object(Vec<(Node, Node)>),
         }
 
-        Value.Null => Node::Null;
-        Value.True => Node::Boolean(true);
-        Value.False => Node::Boolean(false);
-        Value.Number(text: String) => Node::Number(text.parse().unwrap());
-        Value.String(text: String) => Node::String(text);
-        Value.Array(nodes: Vec<Node>) => Node::Array(nodes);
-        Value.Object(keys: Vec<Node>, values: Vec<Node>) => Node::Object(keys.iter().zip(values).collect());
+        .Null => Node::Null;
+        .True => Node::Boolean(true);
+        .False => Node::Boolean(false);
+        .Number(text: String) => Node::Number(text.parse().unwrap());
+        .String(text: String) => Node::String(text);
+        .Array(nodes: Vec<Node>) => Node::Array(nodes);
+        .Object(keys: Vec<Node>, values: Vec<Node>) => Node::Object(keys.iter().zip(values).collect());
     }
 }
 

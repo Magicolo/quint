@@ -18,7 +18,7 @@ use Node::*;
 
 #[derive(Clone, Default)]
 pub struct Tree<'a> {
-    pub kind: String, // TODO: try to replace with '&str'
+    pub kind: String,
     pub values: Vec<&'a str>,
     pub children: Vec<Tree<'a>>,
 }
@@ -91,10 +91,9 @@ impl From<Node> for Parser {
                     let parsers: Vec<_> = nodes.iter().map(|node| next(node, references)).collect();
                     Rc::new(move |state| {
                         for parser in &parsers {
-                            if parser(state) {
-                                continue;
+                            if parser(state) == false {
+                                return false;
                             }
-                            return false;
                         }
                         true
                     })
