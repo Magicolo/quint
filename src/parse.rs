@@ -119,12 +119,9 @@ impl From<Node> for Parser {
                         false
                     })
                 }
-                Refer(Index(index)) => match &state.references[*index] {
+                &Refer(Index(index)) => match &state.references[index] {
                     Some(parser) => parser.clone(),
-                    None => {
-                        let index = *index;
-                        Rc::new(move |state| state.references[index].clone()(state))
-                    }
+                    None => Rc::new(move |state| state.references[index].clone()(state)),
                 },
                 Spawn(kind) => {
                     let depth = state.depth;
@@ -140,16 +137,13 @@ impl From<Node> for Parser {
                         true
                     })
                 }
-                Symbol(symbol) => {
-                    let symbol = *symbol;
-                    Rc::new(move |state| match state.text.get(state.index..) {
-                        Some(slice) if slice.starts_with(symbol) => {
-                            state.index += symbol.len_utf8();
-                            true
-                        }
-                        _ => false,
-                    })
-                }
+                &Symbol(symbol) => Rc::new(move |state| match state.text.get(state.index..) {
+                    Some(slice) if slice.starts_with(symbol) => {
+                        state.index += symbol.len_utf8();
+                        true
+                    }
+                    _ => false,
+                }),
                 Text(text) => {
                     let text = text.clone();
                     Rc::new(move |state| match state.text.get(state.index..) {
@@ -160,16 +154,12 @@ impl From<Node> for Parser {
                         _ => false,
                     })
                 }
-                Store(shift, Stack::Push) => {
-                    let shift = *shift;
-                    Rc::new(move |state| {
-                        state.indices.push(state.index - shift);
-                        true
-                    })
-                }
-                Store(shift, Stack::Pop) => {
+                &Store(shift, Stack::Push) => Rc::new(move |state| {
+                    state.indices.push(state.index - shift);
+                    true
+                }),
+                &Store(shift, Stack::Pop) => {
                     let depth = state.depth;
-                    let shift = *shift;
                     Rc::new(move |state| match state.indices.pop() {
                         Some(index) => {
                             let depth = state.values[depth];
@@ -180,19 +170,15 @@ impl From<Node> for Parser {
                         None => false,
                     })
                 }
-                Precede(precedence, bind, Stack::Push) => {
-                    let precedence = *precedence;
-                    let bind = bind.clone();
-                    Rc::new(move |state| match bind {
-                        Bind::Left if precedence <= state.precedence => false,
-                        Bind::Right if precedence < state.precedence => false,
-                        _ => {
-                            let precedence = mem::replace(&mut state.precedence, precedence);
-                            state.precedences.push(precedence);
-                            true
-                        }
-                    })
-                }
+                &Precede(precedence, bind, Stack::Push) => Rc::new(move |state| match bind {
+                    Bind::Left if precedence <= state.precedence => false,
+                    Bind::Right if precedence < state.precedence => false,
+                    _ => {
+                        let precedence = mem::replace(&mut state.precedence, precedence);
+                        state.precedences.push(precedence);
+                        true
+                    }
+                }),
                 Precede(_, _, Stack::Pop) => Rc::new(move |state| match state.precedences.pop() {
                     Some(precedence) => {
                         state.precedence = precedence;
@@ -200,38 +186,22 @@ impl From<Node> for Parser {
                     }
                     None => false,
                 }),
-                Set(Index(index), Set::Copy(Index(copy))) => {
-                    let index = *index;
-                    let copy = *copy;
-                    Rc::new(move |state| {
-                        state.values[index] = state.values[copy];
-                        true
-                    })
-                }
-                Set(Index(index), Set::Add(value)) => {
-                    let index = *index;
-                    let value = *value;
-                    Rc::new(move |state| {
-                        state.values[index] += value;
-                        true
-                    })
-                }
-                Set(Index(index), Set::Value(value)) => {
-                    let index = *index;
-                    let value = *value;
-                    Rc::new(move |state| {
-                        state.values[index] = value;
-                        true
-                    })
-                }
-                If(Index(left), If::Less, Index(right)) => {
-                    let left = *left;
-                    let right = *right;
+                &Set(Index(index), Set::Copy(Index(copy))) => Rc::new(move |state| {
+                    state.values[index] = state.values[copy];
+                    true
+                }),
+                &Set(Index(index), Set::Add(value)) => Rc::new(move |state| {
+                    state.values[index] += value;
+                    true
+                }),
+                &Set(Index(index), Set::Value(value)) => Rc::new(move |state| {
+                    state.values[index] = value;
+                    true
+                }),
+                &If(Index(left), If::Less, Index(right)) => {
                     Rc::new(move |state| state.values[left] < state.values[right])
                 }
-                If(Index(left), If::Equal, Index(right)) => {
-                    let left = *left;
-                    let right = *right;
+                &If(Index(left), If::Equal, Index(right)) => {
                     Rc::new(move |state| state.values[left] == state.values[right])
                 }
                 Switch(cases) => {
@@ -280,7 +250,7 @@ impl From<Node> for Parser {
         let root = next(&node, &state);
         let references = state
             .references
-            .drain(..)
+            .into_iter()
             .map(|parser| parser.unwrap())
             .collect();
         Parser {
