@@ -2,6 +2,7 @@ use crate::node::*;
 use rand;
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
+use std::collections::HashMap;
 use std::rc::Rc;
 use Identifier::*;
 use Node::*;
@@ -10,6 +11,8 @@ use Node::*;
 pub struct Generator {
     root: Generate,
     references: Vec<Generate>,
+    node_indices: HashMap<Identifier, usize>,
+    value_indices: HashMap<Identifier, usize>,
 }
 
 struct State<'a> {
@@ -109,7 +112,7 @@ impl From<Node> for Generator {
             }
         }
 
-        let (node, nodes) = node.resolve();
+        let (node, nodes, node_indices, value_indices) = node.resolve();
         let mut generators = vec![None; nodes.len()];
         for i in 0..nodes.len() {
             generators[i] = Some(next(&nodes[i], &generators));
@@ -119,6 +122,11 @@ impl From<Node> for Generator {
             .drain(..)
             .map(|generator| generator.unwrap())
             .collect();
-        Generator { root, references }
+        Generator {
+            root,
+            references,
+            node_indices,
+            value_indices,
+        }
     }
 }

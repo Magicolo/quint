@@ -18,20 +18,6 @@ pub enum Identifier {
     Path(String),
 }
 
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub enum Set {
-//     Value(isize),
-//     Add(isize),
-//     Copy(String),
-// }
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub enum If {
-//     Less,
-//     Equal,
-//     Greater,
-// }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bind {
     None,
@@ -43,6 +29,20 @@ pub enum Bind {
 pub enum Stack {
     Push,
     Pop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Set {
+    Value(isize),
+    Add(isize),
+    Copy(Identifier),
+    // Map(fn(isize) -> isize), // Is this a good idea?
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum If {
+    Less,
+    Equal,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -63,13 +63,16 @@ pub enum Node {
     Depth(isize),
     Precede(usize, Bind, Stack),
     Store(usize, Stack),
+
+    Set(Identifier, Set),
+    If(Identifier, If, Identifier),
     /*
     State nodes:
-        Set(Identifier, Set),
-        If(Identifier, If, Identifier),
-        Push(),
-        Pop(),
+    Push(),
+    Pop(),
 
+    - store: Store(usize, Stack) -> Shift(usize, Store(Stack))
+    - depth: Depth(isize) -> Set(Path(".depth"), Add(isize))
     - if-else:
         Or(And(If("left", compare, "right"), if), else)
     - indent:
@@ -79,8 +82,9 @@ pub enum Node {
                 And(Symbol('\t'), Set("indent", Add(1)), Refer(0)),
                 True
             )),
+            Refer(0),
             If("indent", >, "$.indent"),
-            Set(".index", Copy("index")),
+            Set(".indent", Copy("index")),
         )
     - dedent:
         And(
@@ -257,13 +261,21 @@ impl Node {
         nodes
     }
 
-    pub fn resolve(self) -> (Node, Vec<Node>) {
+    pub fn resolve(
+        self,
+    ) -> (
+        Node,
+        Vec<Node>,
+        HashMap<Identifier, usize>,
+        HashMap<Identifier, usize>,
+    ) {
         struct State {
             nodes: Vec<Option<Node>>,
-            references: HashMap<Node, usize>,
-            indices: HashMap<Identifier, usize>,
-            optimize: HashSet<usize>,
+            node_references: HashMap<Node, usize>,
+            node_indices: HashMap<Identifier, usize>,
+            value_indices: HashMap<Identifier, usize>,
             refer_threshold: usize,
+            optimize: HashSet<usize>,
         }
 
         /*
@@ -294,22 +306,36 @@ impl Node {
                     (Or(left, middle), right) => Or(left, Or(middle, right.into()).into()),
                     (left, right) => or(left, right),
                 },
-                Switch(mut cases) => any(cases.drain(..).map(|pair| and(pair.0, pair.1)).collect())
+                Switch(cases) => any(cases.into_iter().map(|pair| and(pair.0, pair.1)).collect())
                     .descend(normalize),
                 Text(text) => all(text.chars().map(Symbol).collect()).descend(normalize),
                 node => node,
             }
         }
 
-        fn index(identifier: Identifier, state: &mut State) -> usize {
+        fn node_index(identifier: Identifier, state: &mut State) -> usize {
             match identifier {
                 Index(index) => index,
-                identifier => match state.indices.get(&identifier) {
+                identifier => match state.node_indices.get(&identifier) {
                     Some(index) => *index,
                     None => {
-                        let index = state.nodes.len();
+                        let index = state.node_indices.len();
+                        state.node_indices.insert(identifier, index);
                         state.nodes.push(None);
-                        state.indices.insert(identifier, index);
+                        index
+                    }
+                },
+            }
+        }
+
+        fn value_index(identifier: Identifier, state: &mut State) -> usize {
+            match identifier {
+                Index(index) => index,
+                identifier => match state.value_indices.get(&identifier) {
+                    Some(index) => *index,
+                    None => {
+                        let index = state.value_indices.len();
+                        state.value_indices.insert(identifier, index);
                         index
                     }
                 },
@@ -317,24 +343,24 @@ impl Node {
         }
 
         fn define(identifier: Identifier, node: Node, state: &mut State) -> usize {
-            match (state.references.get(&node), identifier) {
+            match (state.node_references.get(&node), identifier) {
                 (Some(index), _) => *index,
                 (None, Path(path)) => {
                     let mut parts: Vec<_> = path.split(".").collect();
                     while parts.len() > 0 {
-                        let index = index(Path(parts.join(".")), state);
+                        let index = node_index(Path(parts.join(".")), state);
                         match mem::replace(&mut state.nodes[index], None) {
                             Some(left) => state.nodes[index] = Some(or(left, node.clone())),
                             None => state.nodes[index] = Some(node.clone()),
                         }
                         parts.pop();
                     }
-                    index(Path(path), state)
+                    node_index(Path(path), state)
                 }
                 (None, identifier) => {
-                    let index = index(identifier, state);
+                    let index = node_index(identifier, state);
                     state.nodes[index] = Some(node.clone());
-                    state.references.insert(node, index);
+                    state.node_references.insert(node, index);
                     index
                 }
             }
@@ -353,7 +379,13 @@ impl Node {
                     define(identifier, *node, state);
                     True
                 }
-                Refer(identifier) => Refer(Index(index(identifier, state))),
+                Refer(identifier) => Refer(Index(node_index(identifier, state))),
+                If(left, compare, right) => If(
+                    Index(value_index(left, state)),
+                    compare,
+                    Index(value_index(right, state)),
+                ),
+                Set(target, value) => Set(Index(value_index(target, state)), value),
                 node => node,
             }
         }
@@ -466,6 +498,8 @@ impl Node {
                 },
                 Spawn(kind) => Shift(0, Spawn(kind).into()),
                 Depth(depth) => Shift(0, Depth(depth).into()),
+                Set(target, value) => Shift(0, Set(target, value).into()),
+                If(left, compare, right) => Shift(0, If(left, compare, right).into()),
                 Store(shift, stack) => Shift(0, Store(shift, stack).into()),
                 Precede(precedence, bind, stack) => {
                     Shift(0, Precede(precedence, bind, stack).into())
@@ -641,15 +675,16 @@ impl Node {
             let count = state.nodes.iter().fold(node.count(), |sum, node| {
                 sum + node.as_ref().map(|node| node.count()).unwrap_or(0)
             });
-            println!("{}: {:?}, {:?}", count, state.optimize, state.indices);
+            println!("{}: {:?}, {:?}", count, state.optimize, state.node_indices);
         }
 
         let mut state = State {
             nodes: Vec::new(),
-            references: HashMap::new(),
-            indices: HashMap::new(),
-            optimize: HashSet::new(),
+            node_references: HashMap::new(),
+            node_indices: HashMap::new(),
+            value_indices: HashMap::new(),
             refer_threshold: 1024,
+            optimize: HashSet::new(),
         };
         print("ORIGINAL", &self, &state);
         let node = self
@@ -667,10 +702,10 @@ impl Node {
         print("OPTIMIZE", &node, &state);
         let nodes = state
             .nodes
-            .drain(..)
+            .into_iter()
             .map(|node| node.unwrap_or(False))
             .collect();
-        (node, nodes)
+        (node, nodes, state.node_indices, state.value_indices)
     }
 }
 
@@ -775,10 +810,29 @@ impl Display for Node {
                 formatter.write_str(stack)
             }
             Shift(shift, node) => {
-                Display::fmt(node, formatter)?;
-                formatter.write_str("<")?;
+                formatter.write_str(">")?;
                 Display::fmt(shift, formatter)?;
-                formatter.write_str(">")
+                formatter.write_str(">")?;
+                formatter.write_str("(")?;
+                Display::fmt(node, formatter)?;
+                formatter.write_str(")")
+            }
+            Set(target, value) => {
+                formatter.write_str("(")?;
+                Debug::fmt(target, formatter)?;
+                formatter.write_str(" <- ")?;
+                Debug::fmt(value, formatter)?;
+                formatter.write_str(")")
+            }
+            If(left, compare, right) => {
+                formatter.write_str("(")?;
+                Debug::fmt(left, formatter)?;
+                formatter.write_str(match compare {
+                    If::Less => " < ",
+                    If::Equal => " = ",
+                })?;
+                Debug::fmt(right, formatter)?;
+                formatter.write_str(")")
             }
         }
     }
@@ -801,19 +855,22 @@ pub fn and(left: impl ToNode, right: impl ToNode) -> Node {
 }
 
 pub fn any(nodes: Vec<Node>) -> Node {
-    let mut nodes = nodes;
-    nodes.drain(..).rev().fold(False, |sum, node| or(node, sum))
+    nodes
+        .into_iter()
+        .rev()
+        .fold(False, |sum, node| or(node, sum))
 }
 
 pub fn all(nodes: Vec<Node>) -> Node {
-    let mut nodes = nodes;
-    nodes.drain(..).rev().fold(True, |sum, node| and(node, sum))
+    nodes
+        .into_iter()
+        .rev()
+        .fold(True, |sum, node| and(node, sum))
 }
 
 pub fn chain(nodes: Vec<Node>) -> Node {
-    let mut nodes = nodes;
     nodes
-        .drain(..)
+        .into_iter()
         .rev()
         .fold(True, |sum, node| option(and(node, sum)))
 }
@@ -855,9 +912,14 @@ pub fn define(path: &str, node: impl ToNode) -> Node {
 }
 
 pub fn syntax(path: &str, node: impl ToNode) -> Node {
+    let depth = Path(".depth".into());
     Define(
         Identifier::Path(path.into()),
-        and(Depth(1), and(node, and(Depth(-1), Spawn(path.into())))).into(),
+        and(
+            Set(depth.clone(), Set::Add(1)),
+            and(node, and(Set(depth, Set::Add(-1)), Spawn(path.into()))),
+        )
+        .into(),
     )
 }
 
